@@ -13,6 +13,18 @@
 
 Phone Use connects your existing AI agent to your phone through **Skill or MCP**. The agent can read the screen, tap, swipe, type, and switch apps—**no root, ADB, or per-app integration required**.
 
+## Features & advantages
+
+| Feature | How Phone Use helps |
+| --- | --- |
+| **No ADB required** | Compared with ADB-based control, everyday use only requires installing the app, enabling Accessibility, and pairing over the network. No USB debugging or cable is needed. |
+| **Easy integration with AI agents** | Skill, MCP, Python CLI, and HTTP API interfaces connect agents that support these tools and fit into custom automation workflows, without tying you to a particular model or agent framework. |
+| **Screenshots + an optimized UI tree** | Compared with screenshot-only control, agents can also read interface text, element states, and available actions directly, then act by element ID. Screenshots and coordinate actions also support games and custom-drawn interfaces. |
+| **AI-friendly, with lower token overhead** | Compared with raw UI tree dumps, the default compact output filters out invisible nodes and nodes with no useful content or actions, and omits redundant state fields. Semantic folding, focused observations, and tree-only requests further reduce unnecessary information and token usage. |
+| **HTTPS and pairing by default** | Remote connections use HTTPS encryption by default. Skill/MCP clients require an eight-digit code comparison on both ends and approval on the phone, then verify the pinned public key on subsequent connections. Revoke any client from the phone at any time. See [transport security](docs/transport-security.md). |
+| **Built for multiple phones and larger workflows** | One bridge can manage multiple phones, with explicit device IDs, concurrent execution across devices, ordered execution per device, batch calls, and optional time-limited device reservations for automation and testing. |
+| **Personal remote control, too** | Connect a single phone and let your own agent operate it, or call tools directly through the CLI or built-in Web console. The controller must be able to reach the phone's address; the project does not provide a cloud relay. |
+
 ## Examples
 
 <table>
@@ -63,13 +75,6 @@ Choose your agent and installation scope, then send it the following, replacing 
 > Use the phone-use Skill to connect to https://192.168.1.20:8443. Show me the pairing code and wait for my confirmation.
 
 Complete the same code check above. The Skill handles both pairing and phone control; no separate MCP setup is needed.
-
-## Features
-
-- **Screen understanding** — UI elements and screenshots give agents the context to act.
-- **App interaction** — Tap, long-press, swipe, scroll, type, launch apps, and navigate.
-- **Your agent, your devices** — Connect through Skill, MCP, or the Python CLI, with support for multiple phones.
-- **On-device authorization** — Approve clients on your phone, connect over HTTPS with Skill/MCP, and revoke access at any time.
 
 ## Documentation
 
