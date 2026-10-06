@@ -2,8 +2,6 @@ package ai.nidhoggfgg.phoneuse.core
 
 import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.UUID
@@ -15,7 +13,7 @@ class DeviceController(
     private val changed: () -> Unit = {}
 ) {
     val gate = ControlGate()
-    private val executor = ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, LinkedBlockingQueue(32))
+    private val executor = DeviceWorkQueue()
     private data class Request(val client: String, val id: String, val signature: String, val created: Long,
         val result: CompletableFuture<JSONObject> = CompletableFuture(),
         @Volatile var phase: String = "accepted", @Volatile var cancelled: Boolean = false,
@@ -68,7 +66,10 @@ class DeviceController(
     private fun serialRead(client: String, name: String, args: JSONObject, checkTransport: () -> Unit): JSONObject {
         val generation = gate.generation
         val result = CompletableFuture<JSONObject>()
-        try { executor.execute {
+        try { executor.execute(onExpired = {
+            val busy = DeviceError("BUSY", "Device queue wait exceeded 1000 ms; read not started")
+            result.complete(if (name == "observe") observationFailure(busy, args) else errorResult(busy))
+        }) {
             try {
                 checkTransport()
                 checkAccess(client)
@@ -90,7 +91,7 @@ class DeviceController(
             } catch (e: Exception) { result.complete(if (name == "observe") observationFailure(e, args) else errorResult(e)) }
         } } catch (_: java.util.concurrent.RejectedExecutionException) { fail("BUSY", "Device queue is full") }
         // A condition observation can legitimately outlive the action's 15-second response window.
-        // The backend owns the collection budget; this extra allowance is for bounded queueing.
+        // The backend owns the collection budget; queue admission is separately capped at 1 s.
         val waitMs = if (name == "observe") args.optLong("timeout_ms", if (args.has("wait_until")) 10_000 else 20_000) + 15_000 else 15_000
         return try { result.get(waitMs, TimeUnit.MILLISECONDS) } catch (_: TimeoutException) {
             result.complete(if (name == "observe") observationFailure(DeviceError("TIMEOUT", "Observation queue or collection timed out"), args)
@@ -117,7 +118,13 @@ class DeviceController(
                 gate.check(generation)
                 request = Request(client, id, signature, clock())
                 requests[key] = request
-                try { executor.execute { execute(request, name, args, generation, checkTransport) } }
+                try { executor.execute(onExpired = {
+                    synchronized(requests) {
+                        if (!request.result.isDone) complete(request,
+                            errorResult(DeviceError("BUSY", "Device queue wait exceeded 1000 ms; action not started"))
+                                .put("request_id", id).put("action_executed", false))
+                    }
+                }) { execute(request, name, args, generation, checkTransport) } }
                 catch (_: java.util.concurrent.RejectedExecutionException) {
                     complete(request, errorResult(DeviceError("BUSY", "Device queue is full"))
                         .put("request_id", id).put("action_executed", false))

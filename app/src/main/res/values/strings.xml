@@ -106,12 +106,13 @@
     <string name="keep_alive_status_enabled">Background keep-alive: on</string>
     <string name="keep_alive_status_disabled">Background keep-alive: off</string>
     <string name="keep_alive_settings">Keep-alive settings</string>
-    <string name="keep_alive_dashboard_enabled_help">Removing Phone Use from recent apps does not stop the control service. It will try to keep running in the background. You can turn this off in keep-alive settings.</string>
-    <string name="keep_alive_dashboard_disabled_help">Removing Phone Use from recent apps stops the control service. Switching to another app keeps the current session running.</string>
+    <string name="keep_alive_dashboard_enabled_help">Follow the keep-alive settings to allow background activity and autostart, and remove battery restrictions. Otherwise, connections may stall and operations may slow down or time out even when the network is working.</string>
+    <string name="keep_alive_dashboard_disabled_help">Before use, turn on background keep-alive and follow the settings guidance to remove system background restrictions. These restrictions can cause stalled connections, slow operations, or timeouts. Removing Phone Use from recent apps stops the control service.</string>
+    <string name="keep_alive_connection_help">Turn on background keep-alive, allow background activity and autostart in system settings, and remove battery restrictions. Background restrictions can delay secure connections and cause slow operations or timeouts even when the network is working. This switch alone does not remove system restrictions.</string>
     <string name="keep_alive_enabled_help">Keep the control service running with a persistent notification. Try to restore it after system reclamation, reboot, an app update, or accessibility reconnection. May increase battery use.</string>
     <string name="keep_alive_disabled_help">Automatic recovery is off. Removing Phone Use from recent apps stops the control service. Switching to another app keeps the current session running. Accessibility permission and system battery settings stay unchanged.</string>
     <string name="keep_alive_battery_exempt">System battery optimization: unrestricted</string>
-    <string name="keep_alive_battery_restricted">System battery optimization: active; background connections may be interrupted</string>
+    <string name="keep_alive_battery_restricted">System battery optimization: active; connections may stall and operations may slow down or time out</string>
     <string name="keep_alive_battery_settings">Battery optimization</string>
     <string name="keep_alive_autostart_settings">Autostart settings</string>
     <string name="keep_alive_xiaomi_help">In HyperOS / MIUI, allow Phone Use to autostart, set battery saver to No restrictions, and lock it in recent apps. Autostart must be checked manually; unavailable shortcuts open app details.</string>

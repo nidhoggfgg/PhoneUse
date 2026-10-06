@@ -51,6 +51,7 @@ internal fun KeepAliveCard(onChanged: () -> Unit) {
             Text(stringResource(R.string.keep_alive_title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             Switch(checked = enabled, onCheckedChange = null)
         }
+        Text(stringResource(R.string.keep_alive_connection_help), style = MaterialTheme.typography.bodyMedium)
         Text(stringResource(if (enabled) R.string.keep_alive_enabled_help else R.string.keep_alive_disabled_help),
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (enabled) {

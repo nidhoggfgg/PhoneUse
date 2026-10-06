@@ -47,6 +47,49 @@ class DeviceControllerTest {
     }
     private fun action(id: String) = json("request_id" to id)
 
+    @Test fun queuedActionsExpireWithoutRunningWhileLongOperationsStillReturnTheirResult() {
+        val backend = Backend().apply { entered = CountDownLatch(1); release = CountDownLatch(1) }
+        val controller = DeviceController(backend, { 100L }, { true })
+        val thread = Executors.newSingleThreadExecutor()
+        try {
+            val first = thread.submit<JSONObject> { controller.call("a", "home", action("slow")) }
+            assertTrue(backend.entered!!.await(2, TimeUnit.SECONDS))
+            val start = System.nanoTime()
+            val rejected = controller.call("a", "back", action("expires"))
+            val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+            assertEquals("BUSY", rejected.getJSONObject("error").getString("code"))
+            assertFalse(rejected.getBoolean("action_executed"))
+            assertTrue("Queue took $elapsedMs ms", elapsedMs < 2000)
+            assertFalse("Running action must still wait for completion", first.isDone)
+            backend.release!!.countDown()
+            assertEquals("executed", first.get(2, TimeUnit.SECONDS).getString("state"))
+            // The expired action is retained, and replaying its ID cannot execute it later.
+            assertEquals(rejected.toString(), controller.call("a", "back", action("expires")).toString())
+            assertEquals("executed", controller.call("a", "recents", action("next")).getString("state"))
+            assertEquals(2, backend.calls.get())
+        } finally { backend.release!!.countDown(); controller.stop(); thread.shutdownNow() }
+    }
+
+    @Test fun queuedObservationsExpireWithoutCollectingAndDoNotInterruptRunningAction() {
+        val backend = Backend().apply { entered = CountDownLatch(1); release = CountDownLatch(1) }
+        val controller = DeviceController(backend, { 100L }, { true })
+        val thread = Executors.newSingleThreadExecutor()
+        try {
+            val first = thread.submit<JSONObject> { controller.call("a", "home", action("slow")) }
+            assertTrue(backend.entered!!.await(2, TimeUnit.SECONDS))
+            val start = System.nanoTime()
+            val rejected = controller.call("a", "observe", json("timeout_ms" to 60_000))
+            assertEquals("BUSY", rejected.getJSONObject("error").getString("code"))
+            assertEquals("failed", rejected.getString("observation_status"))
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start) < 2000)
+            assertFalse(first.isDone)
+            backend.release!!.countDown()
+            assertEquals("executed", first.get(2, TimeUnit.SECONDS).getString("state"))
+            assertEquals("executed", controller.call("a", "back", action("barrier")).getString("state"))
+            assertTrue(backend.observedClients.isEmpty())
+        } finally { backend.release!!.countDown(); controller.stop(); thread.shutdownNow() }
+    }
+
     @Test fun unconfirmedLaunchIsRetainedAsUnknownAndNeverReplayed() {
         val backend = Backend().apply {
             failure = DeviceError("RESULT_UNKNOWN", "Launch not confirmed", json(

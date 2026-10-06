@@ -57,7 +57,9 @@ Public `GET /identity` returns `device_id/name/model/android_version/is_emulator
 
 Pairing responses include device identity. Pending requests are persisted, and approved credentials are saved atomically. MCP results never return tokens or claim secrets. Devices have independent connections and locks; calls serialize per device and can run concurrently across devices. One offline phone does not block others. Observation IDs bind to a client, phone-service instance, and accessibility-service instance; cross-device, cross-client, and post-restart references are rejected.
 
-The bridge manages `~/.phoneuse.json`, including pending claims, without returning it to MCP. HTTP 401 clears revoked credentials and requests an explicit connect call. Network errors neither delete credentials nor initiate pairing or replay input. This storage does not isolate files from other processes using the same OS account. Each HTTP connection handles one request and closes without affecting authorization; connection pools and waiting queues are bounded.
+The bridge manages `~/.phoneuse.json`, including pending claims, without returning it to MCP. HTTP 401 clears revoked credentials and requests an explicit connect call. Network errors neither delete credentials nor initiate pairing or replay input. This storage does not isolate files from other processes using the same OS account. Each HTTP connection handles one request and closes without affecting authorization.
+
+Connection setup and blocking device requests use separate, bounded worker pools without waiting queues. When connection workers are full, new sockets close immediately; when device-request workers are full, authenticated blocking calls receive HTTP 503 with `error.code:"BUSY"` and `request_admitted:false`. Identity, status and cancellation do not use the blocking-request pool. A 503 does not establish the execution state of a previously submitted request ID (`action_executed:null`); query `get_status` for that ID. Admitted calls still wait for their result under the existing execution/observation limits.
 
 ## JSON API
 
@@ -190,7 +192,7 @@ Do not infer editability from appearance. If the condition times out or the edit
 
 ## Authorization, execution, and deduplication
 
-Paired clients can submit input directly without acquiring control. Actions and immediate reads share one device queue (at most 32 queued requests); change waits do not occupy it. Reads require authentication.
+Paired clients can submit input directly without acquiring control. Actions and immediate reads share one device queue (at most 32 queued requests); change waits do not occupy it. Queue admission allows up to 1000 ms to start, independently of operation duration. Requests that expire before starting return `BUSY` and never execute later. Expired actions retain a terminal result with `action_executed:false` under their request ID. Once started, operations keep their existing execution/observation limits. Reads require authentication.
 
 Optional `acquire_device` reserves a device for up to five minutes for testing. A new reservation cannot be created while actions are unfinished. During it, input from another client or without the correct ID returns `DEVICE_RESERVED`. Old IDs after expiry/release return `LEASE_EXPIRED`. Validation happens at queue admission and before Android input, so expired queued actions do not execute. Reservations do not restrict reads or change pairing. Service destruction or local client revocation clears the reservation; injected input may finish. `get_status.reservation` reports state and remaining time without disclosing the ID.
 

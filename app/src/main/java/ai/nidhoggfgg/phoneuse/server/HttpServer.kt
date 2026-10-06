@@ -7,10 +7,11 @@ import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
-import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.net.ServerSocket
 import java.net.Socket
 import javax.net.ssl.SSLSocket
@@ -25,7 +26,15 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     private val connected: (String) -> Unit) {
     private val transportPolicy = HttpTransportPolicy(allowInsecureHttp)
     private val skills = SkillDistribution({ assets.open(it).use { stream -> stream.readBytes() } }, BuildConfig.VERSION_NAME)
-    private val workers = ThreadPoolExecutor(8, 8, 0, TimeUnit.SECONDS, ArrayBlockingQueue(16))
+    // Neither pool queues sockets behind slow work. Device requests keep their synchronous
+    // responses, but cannot occupy the threads needed for TLS, identity or cancellation.
+    private fun workers(name: String): ThreadPoolExecutor {
+        val sequence = AtomicInteger()
+        return ThreadPoolExecutor(0, 8, 30, TimeUnit.SECONDS, SynchronousQueue(),
+            { task -> Thread(task, "phone-use-$name-${sequence.incrementAndGet()}") })
+    }
+    private val connections = workers("connection")
+    private val requests = workers("request")
     private val clients = ConcurrentHashMap.newKeySet<Socket>()
     private val deadlines = java.util.concurrent.ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
     @Volatile private var listener: ServerSocket? = null
@@ -43,14 +52,19 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                     val client = socket.accept()
                     client.soTimeout = 10_000
                     clients.add(client)
-                    try { workers.execute {
-                        // Includes request parsing, bounded queueing and up to 60 seconds of condition observation.
-                        val timeout = deadlines.schedule({ runCatching { client.close() } }, 90, TimeUnit.SECONDS)
-                        try { client.use { acceptProtocol(it) } } finally {
-                            timeout.cancel(false); transportPolicy.remove(client); clients.remove(client)
+                    var connection: Connection? = null
+                    try {
+                        val admitted = Connection(client).also { connection = it }
+                        connections.execute {
+                            var handedOff = false
+                            try { handedOff = acceptProtocol(admitted) }
+                            finally { if (!handedOff) admitted.close() }
                         }
-                    } }
-                    catch (_: java.util.concurrent.RejectedExecutionException) { clients.remove(client); client.close() }
+                    }
+                    catch (_: java.util.concurrent.RejectedExecutionException) {
+                        connection?.close()
+                        clients.remove(client); client.close()
+                    }
                 } catch (_: Exception) { if (!socket.isClosed) stop() }
             }
         }, "phone-use-http").start()
@@ -58,8 +72,23 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     fun stop() {
         listener?.close(); listener = null
         clients.forEach { runCatching { it.close() } }; clients.clear()
-        workers.shutdownNow()
+        connections.shutdownNow()
+        requests.shutdownNow()
         deadlines.shutdownNow()
+    }
+    private inner class Connection(val raw: Socket) {
+        var socket: Socket = raw
+        // Start at accept, including setup. This is a lifetime limit, not an action timeout.
+        private val timeout = deadlines.schedule({
+            android.util.Log.w("PhoneUseHttp", "Connection lifetime exceeded")
+            runCatching { raw.close() }
+        }, 90, TimeUnit.SECONDS)
+        fun close() {
+            if (socket !== raw) runCatching { socket.close() }
+            runCatching { raw.close() }
+            timeout.cancel(false)
+            transportPolicy.remove(raw); transportPolicy.remove(socket); clients.remove(raw)
+        }
     }
     private data class Response(val status: Int, val body: JSONObject? = null,
         val text: String? = null, val contentType: String = "application/json; charset=utf-8", val allow: String = "POST",
@@ -68,30 +97,37 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     private fun cookie(token: String, port: Int, secure: Boolean) =
         "${cookieName(port, secure)}=$token; Path=/; ${if (secure) "Secure; " else ""}HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
     private class HttpError(val status: Int, message: String) : RuntimeException(message)
-    private fun acceptProtocol(socket: Socket) {
+    private fun acceptProtocol(connection: Connection): Boolean {
+        val socket = connection.raw
+        var stage = "protocol detection"
         try {
             val secure = ConnectionProtocol.isTls(socket)
             val checkTransport = transportPolicy.register(socket, secure)
             if (checkTransport == null) {
                 write(socket, Response(403, json("error" to HttpTransportPolicy.HTTP_DISABLED)))
-                return
+                return false
             }
             if (secure) {
-                (identities.tls.context.socketFactory.createSocket(socket, socket.inetAddress.hostAddress, socket.port, true) as SSLSocket).use { tls ->
+                stage = "TLS handshake"
+                (identities.tls.context.socketFactory.createSocket(socket, socket.inetAddress.hostAddress, socket.port, true) as SSLSocket).also { tls ->
+                    connection.socket = tls
                     tls.useClientMode = false
                     tls.enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
                     tls.soTimeout = socket.soTimeout
                     tls.startHandshake()
-                    handle(tls, true, checkTransport)
                 }
-            } else handle(socket, false, checkTransport)
-        } catch (_: java.io.IOException) {
+            }
+            return handle(connection, secure, checkTransport)
+        } catch (e: java.io.IOException) {
             // A closed connection, invalid TLS handshake or timeout cannot fall back to plaintext.
+            android.util.Log.w("PhoneUseHttp", "$stage failed: ${e.javaClass.simpleName}")
         } catch (e: Exception) {
             android.util.Log.w("PhoneUseHttp", "Protocol detection failed: ${e.javaClass.simpleName}")
         }
+        return false
     }
-    private fun handle(socket: Socket, secure: Boolean, checkConnection: () -> Unit) {
+    private fun handle(connection: Connection, secure: Boolean, checkConnection: () -> Unit): Boolean {
+        val socket = connection.socket
         try {
             checkConnection()
             val input = BufferedInputStream(socket.inputStream)
@@ -142,19 +178,19 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                     val resource = requireNotNull(skills.resource(path, "https://${headers.getValue("host")}"))
                     write(socket, Response(200, bytes = resource.bytes, contentType = resource.contentType, filename = resource.filename))
                 }
-                return
+                return false
             }
             if (request[0] == "GET" && path in setOf("/", "/app.js", "/i18n.js")) {
                 val file = if (path == "/") "index.html" else path.removePrefix("/")
                 val type = if (path == "/") "text/html; charset=utf-8" else "text/javascript; charset=utf-8"
                 write(socket, Response(200, text = assets.open("web/$file").bufferedReader().use { it.readText() }, contentType = type))
-                return
+                return false
             }
             // Public identity lets a paired bridge verify an address before sending its token.
             if (path == "/identity") {
                 write(socket, if (request[0] == "GET") Response(200, identities.deviceIdentity.describe(serviceInstanceId))
                     else Response(405, json("error" to "Only GET is supported"), allow = "GET"))
-                return
+                return false
             }
             val pairingPath = path.removePrefix("/browser")
             val isPairing = pairingPath in setOf("/pair/request", "/pair/reveal", "/pair/status")
@@ -169,16 +205,16 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 // A delayed check (including another tab's) must not overwrite a newer pairing cookie.
                 // Only approval, explicit migration and unpairing change browser credentials.
                 write(socket, Response(200, json("paired" to (client != null), "client_id" to client)))
-                return
+                return false
             }
             if (!isPairing && client == null) throw HttpError(401, "Invalid or missing client authorization")
             if (request[0] == "GET" && path == "/api/tools") {
                 write(socket, Response(200, json("tools" to ToolCatalog.all())))
-                return
+                return false
             }
             if (path == "/api/tools") {
                 write(socket, Response(405, json("error" to "Only GET is supported"), allow = "GET"))
-                return
+                return false
             }
             if (request[0] != "POST") throw HttpError(405, "Only POST is supported")
             if (headers["content-type"]?.substringBefore(';')?.trim()?.lowercase() != "application/json")
@@ -252,18 +288,52 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 controller.revokeClient(client)
                 Response(200, json("paired" to false), cookie = cookie("", socket.localPort, secure))
             } else {
-                connected(client!!)
-                if (path == "/mcp") mcp(client, payload, checkTransport)
-                else {
-                    val name = payload.string("tool")
-                    if (payload.has("arguments") && payload.opt("arguments") !is JSONObject) throw HttpError(400, "arguments must be an object")
-                    val args = payload.optJSONObject("arguments") ?: JSONObject()
-                    Response(200, callTool(client, name, args, checkTransport))
+                val respond = {
+                    respond(socket) {
+                        checkTransport()
+                        connected(client!!)
+                        val result = if (path == "/mcp") mcp(client, payload, checkTransport)
+                        else {
+                            val name = payload.string("tool")
+                            if (payload.has("arguments") && payload.opt("arguments") !is JSONObject) throw HttpError(400, "arguments must be an object")
+                            val args = payload.optJSONObject("arguments") ?: JSONObject()
+                            Response(200, callTool(client, name, args, checkTransport))
+                        }
+                        checkTransport()
+                        result
+                    }
                 }
+                val tool = if (path == "/mcp") {
+                    if (payload.optString("method") == "tools/call") payload.optJSONObject("params")?.optString("name") else null
+                } else payload.optString("tool")
+                if (tool in controller.actionNames || tool in setOf("observe", "list_apps", "wait_for_change")) {
+                    try {
+                        requests.execute { try { respond() } finally { connection.close() } }
+                        return true // Ownership of the open response moves to the request worker.
+                    } catch (_: java.util.concurrent.RejectedExecutionException) {
+                        android.util.Log.w("PhoneUseHttp", "Request capacity exhausted; rejected without queueing")
+                        write(socket, Response(503, json("error" to json("code" to "BUSY",
+                            "message" to "Server request capacity exhausted; request not admitted. Query get_status for any previously submitted request_id."),
+                            "request_admitted" to false, "action_executed" to JSONObject.NULL)))
+                    }
+                } else {
+                    respond()
+                }
+                return false
             }
             checkTransport()
             write(socket, response)
         } catch (e: HttpError) { runCatching { write(socket, Response(e.status, json("error" to e.message))) } }
+        catch (e: DeviceError) { runCatching { write(socket, Response(400, errorResult(e))) } }
+        catch (e: Exception) {
+            android.util.Log.w("PhoneUseHttp", "HTTP request failed: ${e.javaClass.simpleName}", e)
+            runCatching { write(socket, Response(500, json("error" to "Request failed"))) }
+        }
+        return false
+    }
+    private fun respond(socket: Socket, response: () -> Response) {
+        try { write(socket, response()) }
+        catch (e: HttpError) { runCatching { write(socket, Response(e.status, json("error" to e.message))) } }
         catch (e: DeviceError) { runCatching { write(socket, Response(400, errorResult(e))) } }
         catch (e: Exception) {
             android.util.Log.w("PhoneUseHttp", "HTTP request failed: ${e.javaClass.simpleName}", e)

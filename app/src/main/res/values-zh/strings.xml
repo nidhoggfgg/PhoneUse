@@ -104,12 +104,13 @@
     <string name="keep_alive_status_enabled">后台保活：已开启</string>
     <string name="keep_alive_status_disabled">后台保活：已关闭</string>
     <string name="keep_alive_settings">保活设置</string>
-    <string name="keep_alive_dashboard_enabled_help">从最近任务中移除应用不会停止控制服务，服务仍会尝试在后台运行。可在保活设置中关闭。</string>
-    <string name="keep_alive_dashboard_disabled_help">从最近任务中移除应用时会停止控制服务；仅切换到其他应用仍可继续当前会话。</string>
+    <string name="keep_alive_dashboard_enabled_help">请在保活设置中继续允许系统后台运行和自启动，并取消省电限制。否则即使网络正常，也可能出现连接卡住、操作变慢或超时。</string>
+    <string name="keep_alive_dashboard_disabled_help">使用前请开启后台保活，并按设置指引解除系统后台限制，以免连接卡住、操作变慢或超时。从最近任务中移除应用会停止控制服务。</string>
+    <string name="keep_alive_connection_help">请开启后台保活，并在系统中允许后台运行、自启动，取消省电限制。后台受限时，即使网络正常，安全连接也可能长时间等待，导致操作变慢或超时。仅开启此开关不会自动解除系统限制。</string>
     <string name="keep_alive_enabled_help">通过常驻通知维持控制服务，系统回收、开机、应用更新或无障碍重新连接后尝试恢复。可能增加耗电。</string>
     <string name="keep_alive_disabled_help">已关闭自动恢复。从最近任务中移除 Phone Use 时停止控制服务；切换到其他应用仍可继续当前会话。不会撤销无障碍授权或修改系统省电设置。</string>
     <string name="keep_alive_battery_exempt">系统电池优化：已豁免</string>
-    <string name="keep_alive_battery_restricted">系统电池优化：仍有限制，可能中断后台连接</string>
+    <string name="keep_alive_battery_restricted">系统电池优化：仍有限制，可能导致连接卡住、操作变慢或超时</string>
     <string name="keep_alive_battery_settings">电池优化设置</string>
     <string name="keep_alive_autostart_settings">自启动设置</string>
     <string name="keep_alive_xiaomi_help">HyperOS / MIUI：允许 Phone Use 自启动，将省电策略设为「无限制」，并在最近任务中锁定。自启动状态需手动确认；快捷入口不可用时会打开应用详情。</string>
