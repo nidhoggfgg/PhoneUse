@@ -2,8 +2,6 @@ package ai.nidhoggfgg.phoneuse.core
 
 import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.UUID
@@ -15,7 +13,7 @@ class DeviceController(
     private val changed: () -> Unit = {}
 ) {
     val gate = ControlGate()
-    private val executor = ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, LinkedBlockingQueue(32))
+    private val executor = DeviceWorkQueue()
     private data class Request(val client: String, val id: String, val signature: String, val created: Long,
         val result: CompletableFuture<JSONObject> = CompletableFuture(),
         @Volatile var phase: String = "accepted", @Volatile var cancelled: Boolean = false,
@@ -32,8 +30,9 @@ class DeviceController(
     @Volatile private var active: Request? = null
     val actionNames = setOf("tap", "long_press", "send_voice", "swipe", "scroll", "input_text", "back", "home", "recents", "launch_app")
 
-    fun call(client: String, name: String, args: JSONObject): JSONObject {
+    fun call(client: String, name: String, args: JSONObject, checkTransport: () -> Unit = {}): JSONObject {
         try {
+            checkTransport()
             checkAccess(client)
             ToolCatalog.validate(name, args)
             return when (name) {
@@ -42,12 +41,12 @@ class DeviceController(
                 "cancel" -> cancel(client, args)
                 "acquire_device" -> acquireDevice(client, args)
                 "release_device" -> releaseDevice(client, args)
-                "observe", "list_apps" -> serialRead(client, name, args)
+                "observe", "list_apps" -> serialRead(client, name, args, checkTransport)
                 "wait_for_change" -> {
                     val generation = gate.generation
-                    backend.waitForChange(args) { checkAccess(client); gate.check(generation) }
+                    backend.waitForChange(args) { checkTransport(); checkAccess(client); gate.check(generation) }
                 }
-                in actionNames -> action(client, name, args)
+                in actionNames -> action(client, name, args, checkTransport)
                 else -> fail("UNKNOWN_TOOL", "Unknown tool: $name")
             }
         } catch (e: DeviceError) {
@@ -64,30 +63,35 @@ class DeviceController(
         if (gate.stopped) fail("STOPPED", "Service is stopped")
         if (!authorized(client)) fail("UNAUTHORIZED", "Client credential was revoked")
     }
-    private fun serialRead(client: String, name: String, args: JSONObject): JSONObject {
-        if (gate.paused) fail("PAUSED", "Resume the service on the phone first")
+    private fun serialRead(client: String, name: String, args: JSONObject, checkTransport: () -> Unit): JSONObject {
         val generation = gate.generation
         val result = CompletableFuture<JSONObject>()
-        try { executor.execute {
+        try { executor.execute(onExpired = {
+            val busy = DeviceError("BUSY", "Device queue wait exceeded 1000 ms; read not started")
+            result.complete(if (name == "observe") observationFailure(busy, args) else errorResult(busy))
+        }) {
             try {
+                checkTransport()
                 checkAccess(client)
-                if (gate.paused || gate.generation != generation || result.isDone) fail("CANCELLED", "Read invalidated")
+                if (gate.generation != generation || result.isDone) fail("CANCELLED", "Read invalidated")
                 val check = {
+                    checkTransport()
                     checkAccess(client)
                     gate.check(generation)
                     if (result.isDone) fail("CANCELLED", "Read invalidated")
                 }
                 val value = if (name == "observe") backend.observe(args, client, check) else backend.listApps()
+                checkTransport()
                 checkAccess(client)
                 // A backend failure may include a valid earlier snapshot. Preserve it after cancellation,
                 // while a revoked credential or stopped service still cannot receive scene data.
-                if (!value.has("error") && (gate.paused || gate.generation != generation)) fail("CANCELLED", "Read invalidated")
+                if (!value.has("error") && gate.generation != generation) fail("CANCELLED", "Read invalidated")
                 if (name == "observe") { normalizeObservation(value); addRecovery(value) }
                 result.complete(value)
             } catch (e: Exception) { result.complete(if (name == "observe") observationFailure(e, args) else errorResult(e)) }
         } } catch (_: java.util.concurrent.RejectedExecutionException) { fail("BUSY", "Device queue is full") }
         // A condition observation can legitimately outlive the action's 15-second response window.
-        // The backend owns the collection budget; this extra allowance is for bounded queueing.
+        // The backend owns the collection budget; queue admission is separately capped at 1 s.
         val waitMs = if (name == "observe") args.optLong("timeout_ms", if (args.has("wait_until")) 10_000 else 20_000) + 15_000 else 15_000
         return try { result.get(waitMs, TimeUnit.MILLISECONDS) } catch (_: TimeoutException) {
             result.complete(if (name == "observe") observationFailure(DeviceError("TIMEOUT", "Observation queue or collection timed out"), args)
@@ -95,7 +99,7 @@ class DeviceController(
             result.get()
         }
     }
-    private fun action(client: String, name: String, args: JSONObject): JSONObject {
+    private fun action(client: String, name: String, args: JSONObject, checkTransport: () -> Unit): JSONObject {
         val id = args.string("request_id", 128)
         val key = "$client:$id"
         // Retain a digest rather than keeping whole audio clips in the deduplication cache.
@@ -118,7 +122,13 @@ class DeviceController(
                 gate.check(generation)
                 request = Request(client, id, signature, clock())
                 requests[key] = request
-                try { executor.execute { execute(request, name, args, generation) } }
+                try { executor.execute(onExpired = {
+                    synchronized(requests) {
+                        if (!request.result.isDone) complete(request,
+                            errorResult(DeviceError("BUSY", "Device queue wait exceeded 1000 ms; action not started"))
+                                .put("request_id", id).put("action_executed", false))
+                    }
+                }) { execute(request, name, args, generation, checkTransport) } }
                 catch (_: java.util.concurrent.RejectedExecutionException) {
                     complete(request, errorResult(DeviceError("BUSY", "Device queue is full"))
                         .put("request_id", id).put("action_executed", false))
@@ -129,9 +139,10 @@ class DeviceController(
             request.result.getNow(pending(request))
         }
     }
-    private fun execute(request: Request, name: String, args: JSONObject, generation: Long) {
+    private fun execute(request: Request, name: String, args: JSONObject, generation: Long, checkTransport: () -> Unit) {
         if (request.result.isDone) return
         val check = {
+            checkTransport()
             checkAccess(request.client)
             gate.check(generation)
             if (request.cancelled) fail("CANCELLED", "Request cancelled")
@@ -154,7 +165,7 @@ class DeviceController(
             complete(request, result)
         } catch (e: Exception) {
             val state = when ((e as? DeviceError)?.code) {
-                "CANCELLED", "UNAUTHORIZED", "STOPPED" -> "cancelled"
+                "CANCELLED", "UNAUTHORIZED", "STOPPED", "TRANSPORT_DISABLED" -> "cancelled"
                 "RESULT_UNKNOWN" -> "unknown"
                 else -> if (e is DeviceError) "failed" else "unknown"
             }
@@ -337,12 +348,11 @@ class DeviceController(
         // Queued reserved actions fail their lease check; an injected action may still complete.
         json("state" to "released", "in_flight_may_complete" to (active?.client == client))
     }
-    fun pause() { gate.pause(); synchronized(requests) { reservation = null }; cancelPending(); changed() }
-    fun resume() { gate.resume(); changed() }
     fun revokeClient(client: String) { synchronized(requests) { if (reservation?.client == client) reservation = null }; cancelPending(client); changed() }
     fun stop() { gate.stop(); synchronized(requests) { reservation = null }; cancelPending(); executor.shutdown(); changed() }
     fun status(client: String, id: String = ""): JSONObject {
-        val result = json("paused" to gate.paused, "stopped" to gate.stopped,
+        // Keep the legacy field for clients that read it; control is always available while running.
+        val result = json("paused" to false, "stopped" to gate.stopped,
             "executing_request_id" to active?.takeIf { it.client == client }?.id)
         synchronized(requests) {
             val lease = currentReservation()

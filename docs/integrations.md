@@ -2,7 +2,23 @@
 
 **English** | [简体中文](integrations.zh-CN.md)
 
-Install the Skill with `skills add`, or run the MCP bridge with `npx`. Neither requires manually downloading a ZIP.
+The recommended route is to send your AI the prompt provided by the app to install the Skill directly from the phone and connect. GitHub Skill installation and MCP remain available.
+
+## Install directly from the phone (recommended)
+
+1. Open the app, enable accessibility, and ensure the AI's execution environment can reach the phone.
+2. In **Connect your AI**, choose a phone address reachable by the AI.
+3. Use the copy button beside the prompt and send the complete text to the AI. It includes connection instructions and a link like `https://PHONE:8443/connect#sha256=PACKAGE_HASH`.
+4. The AI reads the guide, downloads the complete Skill from the same port, checks the SHA-256 from your original link, and installs it in its host's Skill directory. A host without persistent Skill installation can extract it into a workspace and run the client directly.
+5. Compare all eight digits shown by the AI and phone, approve on the phone, and explicitly confirm the match to the AI. Later connections reuse the saved pairing.
+
+This route uses **Python 3.10+ and its standard library**. The AI must have file access, program execution, and network access to the phone; a URL cannot grant these capabilities to a cloud-only chat. Hosts that discover new Skills only in a new session can still read SKILL.md and run the client in the current session.
+
+The package matches the installed app. After an app update, copy a fresh link and ask the AI to update its Skill. Stop on a hash mismatch; preserve customized files as a backup and keep `~/.phoneuse.json`. Initial downloads use self-signed TLS: only public, credential-free downloads may skip certificate-chain validation, with the hash from the user's link checked before execution. Pairing and control retain the client's strict public-key checks. A hash fetched from the same unverified server alone checks integrity, not authenticity.
+
+Public routes are `GET /connect`, `GET /skills/manifest.json`, `GET /skills/phone-use.zip`, and `GET /skills/phone-use/SKILL.md`. Existing host allowlist and HTTP settings apply. Downloads do not require pairing; device control still does.
+
+## Requirements for GitHub installation
 
 Both integrations need Python 3.10+. For online installation, use Node.js 22.20+ with npm/npx and Git. The MCP launcher itself supports Node.js 18+. Start the service on the phone, enable accessibility for device operations, and make sure the client can reach the phone's IPv4 address. Initial pairing requires approval on the phone. Transport is pinned HTTPS; compare all eight digits with the phone, approve there, and explicitly confirm the match to the AI before it passes `confirm_pairing:true`. There is no cloud relay.
 
@@ -102,7 +118,7 @@ Rerun the Skill installation command to update it. npm may cache GitHub default-
 
 MCP and Skill share `~/.phoneuse.json` by default. npm cache changes do not remove phone authorization. Use separate `--config` paths for separate credentials. Never commit or distribute the registry. Access can be revoked on the phone.
 
-A cloud host without local execution or a route to your phone cannot use this bridge directly. If tools are missing, check stdio MCP support. If actions fail, check accessibility, lock state, and pause state. After a network interruption, query the original `request_id`; do not replay uncertain input.
+A cloud host without local execution or a route to your phone cannot use this bridge directly. If tools are missing, check stdio MCP support. If actions fail, check accessibility, lock state, and client authorization. After a network interruption, query the original `request_id`; do not replay uncertain input.
 
 ## Maintenance and offline packages
 

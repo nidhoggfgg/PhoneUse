@@ -2,9 +2,19 @@
 
 **English** | [简体中文](validation.zh-CN.md)
 
-## Build and automated checks
+## Build from source
 
 Use JDK 25 and Android SDK 37 with the checked-in Gradle wrapper. Configure the SDK locally; do not commit machine paths.
+
+```sh
+git clone --recurse-submodules https://github.com/nidhoggfgg/PhoneUse.git
+cd PhoneUse
+./gradlew :app:assembleDebug
+```
+
+On Windows, use `.\gradlew.bat :app:assembleDebug`. Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11+. The build bundles the client, API references, and Skill instructions into the APK. For an existing checkout, initialize or update the Skill with `git submodule update --init --recursive` before building.
+
+## Automated checks
 
 ```sh
 git submodule update --init --recursive
@@ -45,24 +55,20 @@ The Gradle task installs the debug-only fixture first. Test reports are written 
 | Web tests | Pairing UI, recovery, API forms, request IDs, responsive layout | Simulated HTTP responses |
 | Android instrumentation | Production service, accessibility, fixture controls, UI language and persistence | Emulator coverage does not establish vendor compatibility |
 
-The latest archived Android run (2026-09-17) records 78 JVM tests and 27 device tests passing on a Pixel 8 / Android 17 emulator, with no Lint errors. These are historical results, not a new run or a compatibility guarantee. Earlier records describe behavior later changed by the implementation.
-
-The [original September 2026 validation log (Chinese)](history/validation-2026-09.zh-CN.md) is retained for provenance. Its local reports are generated artifacts, not bundled evidence. Current behavior is defined in the [API reference](api.md).
-
 ## Physical-device acceptance checklist
 
 Record device model, Android version, app revision, latency, error codes, and recovery steps. Android 11–12 language persistence, Android 14+, Android 17+ permissions, and vendor background restrictions still need matching-device verification.
 
-1. Install, grant accessibility and notifications, start the service, and verify local-network permission where applicable. Pair from the web console and MCP; compare verification codes on both ends. Test approval, denial, expiry, and revocation.
+1. Install, grant accessibility and notifications, verify automatic service startup, and verify local-network permission where applicable. Pair from the web console and MCP; compare verification codes on both ends. Test approval, denial, expiry, and revocation.
 2. Verify unauthenticated API/MCP requests fail, browser requests obey Host/Origin checks, and the root page remains accessible. Pairing must not enable remote approval of Phone Use's protected controls.
 3. Observe tree, screenshot, and both modes. Compare bounds and coordinates across system bars, keyboard visibility, and rotation. Check protected screenshots and password fields independently of tree availability.
 4. Launch an app, focus a field explicitly, observe it, replace and insert Chinese text, then independently verify the actual text and selection. Test empty fields and unsupported editors.
 5. Test node and coordinate taps, long presses, scrolling, full swipe paths, and Back/Home/Recents. Confirm actual target behavior and that no fallback or repeated input occurs.
 6. Change a selected target, its identity, display geometry, and service instance. Stale references must fail. Ordinary unrelated refreshes must not impose whole-page stability. Test explicit `expected_window_id` separately.
 7. Repeat an identical `request_id`: only one input should occur. Reuse the ID with different arguments: expect a conflict. For network loss, query the original request; never infer safe replay after retention expiry or process restart.
-8. Queue actions and pause locally. Queued inputs must not run; an injected gesture may finish. Resume must not replay cancelled requests. Revoking one client must not invalidate another client's queue.
-9. Confirm default actions do not implicitly observe or wait. Test explicit conditions, ambiguous targets, timeouts, and successful input followed by observation failure. Verify execution facts remain separate from observation and business success.
-10. Restart the client and phone service; verify saved pairing and pause state. Explicit stop must stay stopped on the next app open. Test reboot, force-stop, and vendor battery policies separately.
+8. Queue actions and revoke the client locally. Its queued inputs must not run; an injected gesture may finish. Revoking one client must not invalidate another client's queue. Service destruction must cancel all unexecuted input.
+9. Confirm default actions do not collect post-action trees/screenshots. For `launch_app`, test foreground confirmation, a five-second timeout with `RESULT_UNKNOWN`, permission guidance, and cancellation after Intent dispatch. Other actions do not implicitly wait. Test explicit conditions, ambiguous targets, timeouts, and successful input followed by observation failure. Verify execution facts remain separate from observation and business success.
+10. Open the app after a fresh install and after saving legacy stopped/paused preferences; verify automatic port 8443 startup in both cases. Reopen after service destruction and verify startup and saved pairings. The dashboard and notification must have no start, pause, or stop controls. Background keep-alive defaults on. Turning it off persists across recreation, preserves sessions while switching apps, stops control when removing the recent task, and prevents boot/update/accessibility reconnection recovery. Re-enable and verify task removal, system reclamation, and boot recovery. Force-stop still requires reopening the app. Check battery status refresh, OEM settings fallbacks, and English/Chinese layouts; vendor autostart and battery policies need physical-device validation.
 11. Connect a physical phone and emulator to one bridge. Verify explicit IDs, independent calls, one-device outage, and refusal to send old credentials when an address points to another installation. Cross-client and cross-instance observation references must fail.
 12. Run dynamic lists, repeated screenshots, keyboard interactions, overlays, and at least ten minutes of background operation. Record both failures and recovery; do not generalize emulator results to all phones.
 

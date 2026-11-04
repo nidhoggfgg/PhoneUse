@@ -728,7 +728,7 @@ def bridge(connection):
             if method == "initialize":
                 version = params.get("protocolVersion")
                 result = {"protocolVersion": version if version in ("2025-03-26", "2025-06-18", "2025-11-25") else "2025-11-25",
-                          "capabilities": {"tools": {"listChanged": True}}, "serverInfo": {"name": "phone-use", "version": "1.1.0"},
+                          "capabilities": {"tools": {"listChanged": True}}, "serverInfo": {"name": "phone-use", "version": "1.3.0"},
                           "instructions": "List devices, or phoneuse_connect(address) and approve once on that phone. Every device call requires device_id; there is no current device. Credentials stay in this bridge. Use unique request_id values for actions; never replay after connection failures. Use acquire_device/release_device to reserve a device for consecutive test steps."}
             elif method == "ping":
                 result = {}

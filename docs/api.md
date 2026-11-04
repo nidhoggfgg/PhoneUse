@@ -4,7 +4,7 @@
 
 ## Access and identity
 
-The server listens on IPv4 `0.0.0.0:8443` using **TLS 1.2/1.3 only**. Each installation creates a non-exportable Android Keystore key and self-signed certificate. Native clients authenticate its SHA-256 SPKI pin through short-code pairing; no public CA or copied fingerprint is needed. HTTP-era credentials are invalidated and require new pairing.
+The server listens on port `8443`, accepting **TLS 1.2/1.3 HTTPS and HTTP on the same socket**. By default, HTTP requires both socket endpoints and the requested Host to use `127.0.0.1`; other HTTP, including IPv6 loopback and whitelisted domains, is rejected before pairing/authentication. The persistent insecure-HTTP setting enables these other HTTP connections immediately; disabling it disconnects their existing requests and invalidates queued work. Both transports remain subject to the independent access address allowlist, normal pairing and authorization. Each installation retains its non-exportable Android Keystore key, certificate and SHA-256 SPKI pairing. Native clients continue to use pinned HTTPS without fallback.
 
 ### Commit → reveal → compare on both sides → approve → claim
 
@@ -24,17 +24,32 @@ Requests expire two minutes after creation; approval does not extend that time. 
 
 `GET /` serves a public console without credentials or device data. Navigation from another page, including `Sec-Fetch-Site: cross-site`, is allowed, subject to Host validation. Scripts, pairing, and API requests retain same-origin checks. Framing is forbidden. `GET /app.js` is public; authenticated `GET /api/tools` returns `{"tools":[...]}` using the same parameter definitions as MCP `tools/list`.
 
-API/MCP accept Bearer authorization or the browser's pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit except for authenticated voice requests (4 MiB). There is no cross-origin CORS access. Host must be the phone IPv4 and port used to connect, such as `192.168.1.20:8443`; Origin, when present, must match `https://IP:PORT`. Domain names and reverse proxies are not currently supported. Native clients without Origin are allowed.
+API/MCP accept Bearer authorization or the browser's transport-specific pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit except for authenticated voice requests (4 MiB). With an empty access address allowlist, Host must match the receiving IP and port; domains are rejected. With a configured list, Host must exactly match a listed IP/domain and the service port; the receiving IP and loopback are not implicitly allowed. The list checks destination addresses, not client source IPs, and is read for each request. Origin, when present, must exactly match the request scheme and authority. Same-site and cross-site API requests are rejected; no CORS access is provided. Forwarding headers are not trusted. Native clients without Origin are allowed.
 
-Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with `{"client_name":"browser"}` and the original six-digit authorization code. This requires independently trusted browser TLS; it is not the native eight-digit SAS protocol. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days and is renewed on session recovery, subject to browser cleanup policies. The Secure flag restricts cookies to HTTPS. JavaScript does not read the long-term credential.
+Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with `{"client_name":"browser"}` and the original six-digit authorization code. Over HTTPS this requires independently trusted browser TLS; it is not the native eight-digit SAS protocol. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days, subject to browser cleanup policies. The Secure flag restricts cookies to HTTPS. JavaScript does not read the long-term credential.
 
-- `GET /browser/session`: returns HTTP 200 with `{"paired":true,"client_id":"..."}` or `{"paired":false,"client_id":null}`; validates and renews or clears the cookie without issuing a new identity.
+HTTP uses a separate `phoneuse_http_client_PORT` cookie without Secure, with the same HttpOnly, SameSite and expiry attributes. HTTPS only reads its existing Secure cookie; HTTP only reads its own cookie. HTTP pairing does not provide transport encryption or TLS server identity.
+
+- `GET /browser/session`: returns HTTP 200 with `{"paired":true,"client_id":"..."}` or `{"paired":false,"client_id":null}`; validates authorization without modifying cookies or issuing a new identity.
 - `POST /browser/session`: authenticated Bearer or cookie plus `{}` exchanges the same identity for a persistent cookie. Old open tabs use it to migrate and delete the old sessionStorage token.
 - `POST /browser/forget`: authenticated `{}` revokes the client, clears its cookie and cached pairing response, and invalidates queued inputs. Closing the page does not call it.
 
 The console checks connections at startup, focus, and network recovery. Failed startup session reads retry every five seconds while preserving pairing. Inputs never retry automatically. The console no longer exports long-term credentials; older exported configurations can still be used by Python.
 
-### Persistent AI connections
+### App-bundled Skill distribution
+
+The same listener serves these read-only routes without pairing:
+
+| Path (GET) | Content |
+| --- | --- |
+| `/connect` | Plain-text Markdown onboarding for AI clients, including the current HTTPS origin |
+| `/skills/manifest.json` | `schema_version`, `name`, `app_version`, `distribution:bundled`, archive `sha256`/`size`, `archive`, `entrypoint`, `skill`, and hash-bearing `connect_url` |
+| `/skills/phone-use.zip` | Complete `phone-use/` directory with the Python client, Skill instructions, and API references; an `application/zip` attachment |
+| `/skills/phone-use/SKILL.md` | The same instructions contained in the archive |
+
+Only GET is supported; other methods return 405. `/connect` permits external navigation like the home page. Downloads retain same-origin checks; all routes enforce the host allowlist and HTTP setting. Only fixed packaged files are served, without credentials or control authorization. The manifest does not include device identity. The app's shared link includes `#sha256=...` for archive verification; fragments are not sent to the server. The bundled Skill updates with the app and does not query the Internet for updates.
+
+### Persistent AI connections and identity
 
 `python tools/phoneuse_client.py mcp-stdio --url https://PHONE:8443` can initialize before pairing or while offline. One bridge manages multiple devices. `phoneuse_connect` adds by address or reconnects by `device_id`; `phoneuse_list_devices` reports installation ID, name, model, Android version, address, online status, and emulator status. Every device call must specify `device_id`; there is no shared current device. Paired tools are exposed directly; `phoneuse_call` is a fallback for hosts that do not refresh their tool list.
 
@@ -42,7 +57,9 @@ Public `GET /identity` returns `device_id/name/model/android_version/is_emulator
 
 Pairing responses include device identity. Pending requests are persisted, and approved credentials are saved atomically. MCP results never return tokens or claim secrets. Devices have independent connections and locks; calls serialize per device and can run concurrently across devices. One offline phone does not block others. Observation IDs bind to a client, phone-service instance, and accessibility-service instance; cross-device, cross-client, and post-restart references are rejected.
 
-The bridge manages `~/.phoneuse.json`, including pending claims, without returning it to MCP. HTTP 401 clears revoked credentials and requests an explicit connect call. Network errors neither delete credentials nor initiate pairing or replay input. This storage does not isolate files from other processes using the same OS account. Each HTTP connection handles one request and closes without affecting authorization; connection pools and waiting queues are bounded.
+The bridge manages `~/.phoneuse.json`, including pending claims, without returning it to MCP. HTTP 401 clears revoked credentials and requests an explicit connect call. Network errors neither delete credentials nor initiate pairing or replay input. This storage does not isolate files from other processes using the same OS account. Each HTTP connection handles one request and closes without affecting authorization.
+
+Connection setup and blocking device requests use separate, bounded worker pools without waiting queues. When connection workers are full, new sockets close immediately; when device-request workers are full, authenticated blocking calls receive HTTP 503 with `error.code:"BUSY"` and `request_admitted:false`. Identity, status and cancellation do not use the blocking-request pool. A 503 does not establish the execution state of a previously submitted request ID (`action_executed:null`); query `get_status` for that ID. Admitted calls still wait for their result under the existing execution/observation limits.
 
 ## JSON API
 
@@ -57,7 +74,7 @@ The response is the tool result. Device errors use HTTP 200 with `state/error`; 
 | Tool | Arguments |
 | --- | --- |
 | `get_capabilities` | None |
-| `get_status` | Optional `request_id`, restricted to this client's results; includes `paused`, `stopped`, `executing_request_id` |
+| `get_status` | Optional `request_id`, restricted to this client's results; includes `paused` (always `false`, retained for compatibility), `stopped`, `executing_request_id` |
 | `cancel` | Optional `request_id`; otherwise cancels all this client's unfinished inputs |
 | `observe` | `mode`: tree / screenshot / both (default); `max_dimension`: 320–2048, default 1280; `compact`: true; `stable_wait_ms`: 0–2000, default 0; `max_attempts`: 1–3, default 3; other fields below |
 | `acquire_device` | Optional `ttl_ms`: 1000–300000, default 60000; renewal requires current `lease_id` |
@@ -196,13 +213,15 @@ Do not infer editability from appearance. If the condition times out or the edit
 
 ## Authorization, execution, and deduplication
 
-Paired clients can submit input directly without acquiring control. Actions and immediate reads share one device queue (at most 32 queued requests); change waits do not occupy it. Reads require authentication. While paused, observation/app listing/waits are rejected, while status and capabilities remain available.
+Paired clients can submit input directly without acquiring control. Actions and immediate reads share one device queue (at most 32 queued requests); change waits do not occupy it. Queue admission allows up to 1000 ms to start, independently of operation duration. Requests that expire before starting return `BUSY` and never execute later. Expired actions retain a terminal result with `action_executed:false` under their request ID. Once started, operations keep their existing execution/observation limits. Reads require authentication.
 
-Optional `acquire_device` reserves a device for up to five minutes for testing. A new reservation cannot be created while actions are unfinished. During it, input from another client or without the correct ID returns `DEVICE_RESERVED`. Old IDs after expiry/release return `LEASE_EXPIRED`. Validation happens at queue admission and before Android input, so expired queued actions do not execute. Reservations do not restrict reads or change pairing. Local pause, stop, or revocation clears the reservation; injected input may finish. `get_status.reservation` reports state and remaining time without disclosing the ID.
+Optional `acquire_device` reserves a device for up to five minutes for testing. A new reservation cannot be created while actions are unfinished. During it, input from another client or without the correct ID returns `DEVICE_RESERVED`. Old IDs after expiry/release return `LEASE_EXPIRED`. Validation happens at queue admission and before Android input, so expired queued actions do not execute. Reservations do not restrict reads or change pairing. Service destruction or local client revocation clears the reservation; injected input may finish. `get_status.reservation` reports state and remaining time without disclosing the ID.
 
-Credentials remain valid until revoked. Pause blocks new operations and cancels queued input; resume permits new actions without replay. Process/service restart does not replay requests and still requires authorization.
+Credentials remain valid until revoked. Revocation blocks that client’s new operations and cancels its queued input. Process/service restart does not replay requests and still requires authorization.
 
-Default actions execute once and return execution facts, without fixed delays or post-action trees/screenshots. Missing observation is a normal success result. `observe_after:true` explicitly attaches observation; waiting must also be requested in `observation_options`. The client decides the sequence and may reuse a valid reference; observing after every action is not mandatory.
+Actions execute once and return execution facts, without post-action trees/screenshots by default. `launch_app` additionally checks the active accessibility root package for up to five seconds; other actions do not add implicit waits. Missing observation is a normal success result. `observe_after:true` explicitly attaches observation; waiting must also be requested in `observation_options`. The client decides the sequence and may reuse a valid reference; observing after every action is not mandatory.
+
+`launch_app` returns `execution.confirmation:"foreground_observed"` only after seeing the target package. A timeout returns `state:"unknown"`, `error.code:"RESULT_UNKNOWN"`, `error.reason:"launch_not_confirmed"`, and `action_executed:null`. The request was dispatched, so do not automatically replay it. Check the phone for a slow launch, a confirmation dialog, or background-launch restrictions. On every brand, Phone Use shows a local reminder and posts a separate app-launch notification, independent of the silent service notification and its pairing status. Tapping it opens the dashboard; repeated failures update one notification without repeatedly alerting while it remains posted. A confirmed launch or dismissing the in-app reminder clears it. Delivery follows the system notification permission and channel settings; blocked notifications do not replace the original launch result. Separately, the dashboard checks Xiaomi/Redmi/POCO background pop-up permission on resume and shows guidance when denied or a launch was not confirmed; unsupported checks remain unknown and do not cause a permanent dashboard reminder. Settings always provides an Other permissions shortcut, with app-details fallback. A permission flag does not confirm a launch, and an unconfirmed launch does not prove a permission is missing. Interruption after dispatch also stays unknown (`launch_confirmation_interrupted`); explicit Android permission denial returns `ACTION_REJECTED` (`launch_permission_denied`). No full tree or screenshot is collected for launch confirmation.
 
 Actions wait synchronously for up to 15 seconds, then return `accepted` (queued) or `executing`. Continue querying `get_status`; neither means success. Executed input still waiting on observation reports `state:"executing"`, `action_executed:true`, `observation_status:"observing"` at the top level and in `get_status.request`. `observation_purpose` distinguishes after_action / after_rejection. These observation fields are omitted if none was requested. `accepted` with `action_executed:false` means not executed yet, not a terminal rejection.
 
@@ -217,18 +236,18 @@ Actions wait synchronously for up to 15 seconds, then return `accepted` (queued)
 
 Terminal states:
 
-- `executed`: Android accepted a node/navigation/Intent action or reported gesture completion; business success is not claimed.
+- `executed`: Android accepted a node/navigation action, reported gesture completion, or the requested launch package was observed in the foreground; business success is not claimed.
 - `failed`: validation or explicit system rejection, with `error.code/message`.
 - `cancelled`: unexecuted input was cancelled or authorization/control became invalid.
-- `unknown`: gesture callback timeout, partial cancellation, or an exception leaves execution uncertain. Re-observe; do not automatically retry.
+- `unknown`: unconfirmed app launch, gesture callback timeout, partial cancellation, or an exception leaves execution uncertain. Re-observe; do not automatically retry.
 
-Post-action observation failure/timeout preserves `executed`; observation reports its own state/error. An unmet condition must block steps depending on it. Pause cannot retroactively revoke injected input. `cancel` reports `in_flight_may_complete`; immediate gesture termination is not guaranteed.
+Post-action observation failure/timeout preserves `executed`; observation reports its own state/error. An unmet condition must block steps depending on it. Cancellation cannot retroactively revoke injected input. `cancel` reports `in_flight_may_complete`; immediate gesture termination is not guaranteed.
 
 `recovery` is advisory: `category`, `advisory:true`, `replay_action:false`, `suggested_tool`, and `message`. Pending requests use `wait_original_request`; unknown uses `reconcile_result`; terminal unexecuted target errors and post-action observation failures/timeouts use `refresh_observation`. Determine terminal state before replacing an action; `action_executed:false` alone is insufficient. Recovery observations use `recovery_observation` and may nest `last_observation`. CLI/Web identify image provenance recursively; historical images do not change current conditions/errors.
 
 Window inventory is optional diagnostics (`diagnostics:true`), not a requirement that the app fill the screen or that clients select the keyboard window. Versions and event history explain changes without imposing whole-page stability.
 
-Deduplication scope is **client_id + request_id in the current service process**. Tool and arguments must match exactly, ignoring object-key order. Results live for ten minutes, at most 256 IDs, with an approximately eight-million-character cache budget. A full cache rejects new actions instead of dropping unexpired IDs. Snapshots, images, and action arguments are memory-only and do not survive service stop/process death. The app writes no action log or screenshot files.
+Deduplication scope is **client_id + request_id in the current service process**. Tool and arguments must match exactly, ignoring object-key order. Results live for ten minutes, at most 256 IDs, with an approximately eight-million-character cache budget. A full cache rejects new actions instead of dropping unexpired IDs. Snapshots, images, and action arguments are memory-only and do not survive service stop/process death. The app writes no action log or screenshot files. Only the last unconfirmed launch package is retained locally for the permission reminder; a confirmed launch or local dismissal clears it.
 
 If attached observation exceeds retention budget after execution, it becomes `observation_status:"failed"`, `error.code:"CACHE_BUDGET_EXCEEDED"`, `omitted_for_retention:true`; original action state, execution fact, and error remain. Never replay input because of this.
 
@@ -236,11 +255,11 @@ If remaining diagnostics are too large, `diagnostics_omitted_for_retention:true`
 
 An identical ID returns its cached result without new input or observation; different arguments return `REQUEST_ID_CONFLICT`. Cached observation timestamps/expiry do not refresh. Use standalone observe for new data. After ten minutes or process restart, deduplication cannot guarantee safe replay; clients must retain uncertain requests and reconcile with fresh observation.
 
-Notifications provide pause/resume and stop. Revocation rejects that client's subsequent reads/writes and cancels its queued input without affecting others. Stop closes HTTP and invalidates all unexecuted input.
+The service starts automatically when the app opens. Notifications show status and open the app; there are no pause/resume or stop actions. Revocation rejects that client's subsequent reads/writes and cancels its queued input without affecting others. Android service destruction closes the endpoint and invalidates all unexecuted input.
 
 ## Main error codes
 
-`INVALID_ARGUMENT`, `UNKNOWN_TOOL`, `UNAUTHORIZED`, `PAUSED`, `STOPPED`, `CANCELLED`, `BUSY`, `DEVICE_MISMATCH`, `DEVICE_RESERVED`, `LEASE_EXPIRED`, `REQUEST_ID_CONFLICT`, `REQUEST_NOT_FOUND`, `ACCESSIBILITY_UNAVAILABLE`, `SCREEN_OFF`, `DEVICE_LOCKED`, `NO_ACTIVE_WINDOW`, `OBSERVATION_INCONSISTENT`, `OBSERVATION_TIMEOUT`, `STALE_OBSERVATION`, `STALE_ELEMENT`, `WINDOW_MISMATCH`, `ELEMENT_UNAVAILABLE`, `ACTION_UNSUPPORTED`, `ACTION_REJECTED`, `APP_UNAVAILABLE`, `RESULT_UNKNOWN`.
+`INVALID_ARGUMENT`, `UNKNOWN_TOOL`, `UNAUTHORIZED`, `STOPPED`, `CANCELLED`, `BUSY`, `DEVICE_MISMATCH`, `DEVICE_RESERVED`, `LEASE_EXPIRED`, `REQUEST_ID_CONFLICT`, `REQUEST_NOT_FOUND`, `ACCESSIBILITY_UNAVAILABLE`, `SCREEN_OFF`, `DEVICE_LOCKED`, `NO_ACTIVE_WINDOW`, `OBSERVATION_INCONSISTENT`, `OBSERVATION_TIMEOUT`, `STALE_OBSERVATION`, `STALE_ELEMENT`, `WINDOW_MISMATCH`, `ELEMENT_UNAVAILABLE`, `ACTION_UNSUPPORTED`, `ACTION_REJECTED`, `APP_UNAVAILABLE`, `RESULT_UNKNOWN`.
 
 `OBSERVATION_INCONSISTENT` describes collection changes, `STALE_OBSERVATION` invalid action context, and `STALE_ELEMENT` a changed target. These remain distinct for diagnostics and batch summaries.
 

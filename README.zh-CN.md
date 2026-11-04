@@ -1,110 +1,87 @@
-# Phone Use
+<div align="center">
+  <img src="design/icon/phone-use-round.png" width="80" alt="Phone Use">
+  <h1>Phone Use</h1>
+  <p><strong>让 AI Agent 操作你的 Android 手机。</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/Android-11%2B-3DDC84?logo=android&logoColor=white" alt="Android 11+">
+    <a href="docs/integrations.zh-CN.md"><img src="https://img.shields.io/badge/Agent-Skill%20%7C%20MCP-7963D2" alt="Agent Skill 与 MCP"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue" alt="MIT 许可证"></a>
+  </p>
+  <p><a href="https://github.com/nidhoggfgg/PhoneUse/releases/latest"><strong>下载 APK</strong></a> · <a href="#快速开始">快速开始</a> · <a href="#案例">案例</a> · <a href="docs/usage.zh-CN.md">文档</a></p>
+  <p><a href="README.md">English</a> | <strong>简体中文</strong></p>
+</div>
 
-[English](README.md) | **简体中文**
+Phone Use 通过 **Skill 或 MCP**，把你已有的 AI Agent 接到手机上。Agent 可以读取屏幕、点击、滑动、输入文字、切换应用，**无需 Root、ADB，也无需为每个 App 单独适配**。
 
-让 AI 看见并操作 Android 手机，由你在手机上批准访问。
+## 特性与优势
 
-Phone Use 在 Android 11+ 上运行观察与控制服务，通过 JSON API、MCP 和可安装的 Agent Skill 提供界面树、截图及设备操作。手机端无需 root、ADB 或模型后端；AI 客户端独立运行，通过本地网络连接手机。
+| 特性 | Phone Use 的做法与优势 |
+| --- | --- |
+| **无需 ADB** | 相较于依赖 ADB 的控制方案，日常使用只需安装 App、开启无障碍并完成网络配对，无需开启 USB 调试或连接数据线。 |
+| **方便接入各种 AI Agent** | 提供 Skill、MCP、Python CLI 和 HTTP API，可接入支持相应工具的 Agent，也可集成到自己的自动化流程，不绑定特定模型或 Agent 框架。 |
+| **截图 + 优化后的 UI 树** | 相较于仅依赖截图的方案，Agent 还能直接读取界面文字、控件状态和可用动作，按元素 ID 操作；遇到游戏或自绘界面，也可结合截图与坐标操作。 |
+| **AI 友好，更省 token** | 相较于直接输出原始 UI 树，默认精简输出会过滤不可见、无有效内容或动作的节点，并省略冗余状态字段；还支持语义合并、局部观察和仅获取 UI 树，减少发给模型的冗余信息与 token 开销。 |
+| **默认 HTTPS 与配对授权** | 远程连接默认使用 HTTPS 加密。Skill／MCP 首次连接需双端核对八位配对码并在手机授权，后续连接校验已绑定公钥；可随时在手机撤销客户端访问。详见[传输安全](docs/transport-security.zh-CN.md)。 |
+| **面向多设备与规模化使用** | 一个桥接可管理多台手机，按设备 ID 明确选择目标；支持跨设备并发、同设备顺序执行、批量调用和可选的限时设备占用，便于接入多手机自动化或测试流程。 |
+| **也适合个人远程操控** | 只连接一台手机也能使用，可让自己的 Agent 代为操作，或通过 CLI、内置 Web 控制台直接调用工具。控制端需能访问手机地址；项目不提供云端中继。 |
 
-## 主要能力
+## 案例
 
-- **观察屏幕**：精简界面树、JPEG 截图、按需完整树，以及等待指定应用或元素的条件观察。
-- **操作应用**：点击、长按、滑动、滚动、替换或插入文字、启动应用，以及返回、主页和最近任务。
-- **选择接入方式**：内置 Web 控制台、Python CLI、MCP 桥接和 `phone-use` Skill。
-- **管理多台设备**：每次调用明确指定设备 ID，不同设备可独立并发。
-- **保留本地控制**：在手机上批准或撤销客户端，通过通知栏暂停或停止服务。
-
-App 支持英文、简体中文和跟随系统；Web 控制台跟随浏览器语言，不支持的语言回退到英文。
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <p><strong>闲鱼比价</strong><br>整理 29 条内存报价，核对商品详情。</p>
+      <a href="docs/images/secondhand-shopping.webp"><img src="docs/images/secondhand-shopping.webp" width="100%" alt="AI 浏览闲鱼二手内存条，并按规格整理价格"></a>
+    </td>
+    <td width="50%" valign="top">
+      <p><strong>检查 QQ 消息</strong><br>查看近期会话，梳理需要回复的消息。</p>
+      <a href="docs/images/message-review.webp"><img src="docs/images/message-review.webp" width="100%" alt="AI 查看 QQ 聊天记录并汇总可能需要回复的消息"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <p><strong>玩 Roguelike 游戏</strong><br>探路、打怪，用法师打通第一层地牢。</p>
+      <a href="docs/images/roguelike.webp"><img src="docs/images/roguelike.webp" width="100%" alt="AI 操作法师进入地牢第二层，并复盘探索过程"></a>
+    </td>
+    <td width="50%" valign="top">
+      <p><strong>在 Soul 发现有趣的人</strong><br>浏览动态、关注账号，整理兴趣与话题。</p>
+      <a href="docs/images/social-discovery.webp"><img src="docs/images/social-discovery.webp" width="100%" alt="AI 浏览 Soul 资料，并汇总已关注账号的兴趣与聊天话题"></a>
+    </td>
+  </tr>
+</table>
 
 ## 快速开始
 
-### 1. 构建与安装
+准备一台 **Android 11+ 手机**和一个**能执行程序的 AI Agent**，Agent 的执行环境需有 **Python 3.10+**。将手机和 Agent 所在电脑连接到同一 Wi-Fi，或其他能互相访问的网络。
 
-准备 **JDK 25** 和包含 **API 37** 的 Android SDK。仓库固定使用 Gradle **9.7.1** 和 Android Gradle Plugin **9.4.0**。通过 Android Studio 或不提交到仓库的 `local.properties` 配置 SDK 路径。
+1. **安装 App**：[下载 APK](https://github.com/nidhoggfgg/PhoneUse/releases/latest)，安装到手机并打开 Phone Use。
+2. **授予权限**：开启**无障碍权限**，按系统提示允许通知和局域网访问。
+3. **连接 Agent**：在 **「连接 AI」** 卡片中选择可访问的手机地址，点击 **「复制提示词」**，把整段内容发给 Agent。它会安装 Skill 并发起配对。
 
-```sh
-# macOS / Linux
-./gradlew :app:assembleDebug
-```
+首次连接时，逐位核对**手机与 Agent 显示的八位码**。一致后，在手机上授权，再告诉 Agent「已核对一致」。
 
-```powershell
-# Windows PowerShell
-.\gradlew.bat :app:assembleDebug
-```
+**只需配对一次，以后直接让 Agent 操作手机。** 重启后配对仍然保留；撤销授权或清除配对数据后需重新配对。操作期间保持手机亮屏、解锁。
 
-将 `app/build/outputs/apk/debug/app-debug.apk` 安装到 Android 11 或更新版本的手机。构建检查和模拟器测试见[开发与验证](docs/validation.zh-CN.md)。
+### 手动安装 Skill
 
-### 2. 启动手机服务
-
-1. 打开 Phone Use，在 Android 设置中开启其无障碍服务。部分系统需要先为侧载应用允许“受限设置”。
-2. 启动服务并允许通知。Android 17+ 还需按提示授予局域网权限。
-3. 执行输入时保持手机亮屏、解锁，让客户端所在设备能够访问 App 显示的 IPv4 地址。
-
-### 3. 配对客户端
-
-通过 Python 客户端或 MCP 桥接连接 `https://PHONE_IPV4:8443`。逐位核对手机上的八位码，在手机批准，并在控制端确认一致。无需安装证书或复制长指纹。浏览器直连需要单独建立证书信任。
-
-配对在客户端及 App 重启后保留，直到主动撤销或删除凭证。浏览器与 MCP 桥接默认分别配对。操作设备需要无障碍服务，配对和状态查询可在未开启无障碍时使用。
-
-**传输方式**：8443 端口使用 HTTPS，并绑定每台手机的公钥。首次需要双端核对八位码并确认，后续连接自动校验；旧 HTTP 凭证需重新配对。不提供互联网中继，详见[连接说明](docs/usage.zh-CN.md)。
-
-## 接入 AI
-
-通过 GitHub 安装需准备 **Node.js 22.20+**、**Git** 和 **Python 3.10+**。AI 宿主须能运行本地程序并访问手机地址。可选择以下任一方式：
-
-### Agent Skill
+准备 **Node.js 22.20+**、**Git** 和 **Python 3.10+**，执行：
 
 ```sh
 npx skills add nidhoggfgg/phone-use-skills --skill phone-use
 ```
 
-按提示选择 AI 客户端和安装范围，然后告诉 AI：
+按提示选择 Agent 和安装范围，然后把下面这句话发给 AI，地址替换为 **App 显示的 HTTPS 地址**：
 
-> 使用 $phone-use 连接 https://192.168.1.20:8443，显示核对码，等我在手机批准后查看当前界面。
+> 使用 phone-use Skill 连接 https://192.168.1.20:8443，显示配对核对码，等我确认后再继续。
 
-### MCP
-
-让 AI 客户端通过以下命令启动 stdio 服务：
-
-```sh
-npx -y --package=github:nidhoggfgg/PhoneUse phone-use
-```
-
-在相同 `npx` 前缀后使用 `phone-use print-config` 或 `phone-use print-config --host codex` 可生成配置片段。桥接管理配对和凭证，不向模型暴露 token。
-
-[AI 接入指南](docs/integrations.zh-CN.md)包含完整命令、Windows 配置、首次连接、更新和离线包说明。GitHub 安装要求仓库对使用者可访问；包内名称不代表已发布到 npm registry。
-
-## Python CLI
-
-CLI 仅依赖 Python 3.10+ 标准库。在仓库根目录执行：
-
-```sh
-python tools/phoneuse_client.py pair --url https://192.168.1.20:8443 --name laptop
-python tools/phoneuse_client.py list-devices
-python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
-python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg
-```
-
-将 `DEVICE_ID` 替换为配对返回的 ID。凭证由客户端保存在 `~/.phoneuse.json`，不要提交或分发该文件。动作调用、JSON 参数、重连和批量操作见[使用指南](docs/usage.zh-CN.md)。
-
-## 执行方式与限制
-
-动作默认只执行一次，等待、观察与结果验证由客户端明确安排。每个输入动作必须有唯一的 `request_id`；网络异常后查询原请求，不要更换 ID 重放动作。
-
-`executed` 只表示 Android 接受操作或完成手势，不代表应用内任务成功。树与截图分别采集，受保护窗口、自定义控件、键盘和厂商后台策略可能影响可用性。实体设备覆盖尚不完整，详见[验证指南](docs/validation.zh-CN.md)。
+按上面的步骤核对、授权即可。Skill 本身就能完成配对和手机操作，无需另外配置 MCP。
 
 ## 文档
 
-| 指南 | 内容 |
-| --- | --- |
-| [使用与连接](docs/usage.zh-CN.md) | Web 控制台、CLI、配对、语言设置、连接排查 |
-| [AI 接入](docs/integrations.zh-CN.md) | Skill 与 MCP 安装、配置、更新、离线分发 |
-| [API 参考](docs/api.zh-CN.md) | 工具、参数、观察语义、错误及请求保留规则 |
-| [开发与验证](docs/validation.zh-CN.md) | 构建检查、模拟器测试页、实机验收 |
-| [贡献指南](CONTRIBUTING.zh-CN.md) | 提交修改、报告问题、文档约定 |
+[使用与排查](docs/usage.zh-CN.md) · [Skill / MCP 接入](docs/integrations.zh-CN.md) · [API 参考](docs/api.zh-CN.md) · [源码构建](docs/validation.zh-CN.md)
 
-当前指南顶部均提供 English / 简体中文切换。
+[参与贡献](CONTRIBUTING.zh-CN.md) · [反馈问题](https://github.com/nidhoggfgg/PhoneUse/issues) · [安全策略](SECURITY.md)
 
 ## 许可证
 
-本项目采用 [MIT 许可证](LICENSE)。
+[MIT](LICENSE)

@@ -7,6 +7,8 @@ import ai.nidhoggfgg.phoneuse.PhoneUseService
 import ai.nidhoggfgg.phoneuse.R
 import ai.nidhoggfgg.phoneuse.core.DeviceError
 import ai.nidhoggfgg.phoneuse.device.PhoneAccessibilityService
+import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
+import ai.nidhoggfgg.phoneuse.device.KeepAliveSettings
 import ai.nidhoggfgg.phoneuse.server.DeviceIdentity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -31,7 +33,7 @@ import androidx.compose.ui.unit.dp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhoneUseApp(
-    onStartService: () -> Unit,
+    onRetryService: () -> Unit,
     onAccessibilitySettings: () -> Unit,
     onOpenWebConsole: () -> Unit
 ) {
@@ -55,16 +57,23 @@ fun PhoneUseApp(
         }
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (settingsOpen) SettingsScreen()
-            else Dashboard(onStartService, onAccessibilitySettings, onOpenWebConsole)
+            if (settingsOpen) SettingsScreen(onKeepAliveChanged = onRetryService)
+            else Dashboard(onRetryService, onAccessibilitySettings, onOpenWebConsole, onOpenSettings = { settingsOpen = true })
         }
     }
 }
 
 @Composable
-private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () -> Unit, onOpenWebConsole: () -> Unit) {
+private fun Dashboard(
+    onRetryService: () -> Unit,
+    onAccessibilitySettings: () -> Unit,
+    onOpenWebConsole: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
     val context = LocalContext.current
     val identity = remember { DeviceIdentity(context.applicationContext) }
+    val launchGuidance = remember { AppLaunchGuidance(context) }
+    val keepAlive = remember(context) { KeepAliveSettings(context) }
     var tick by remember { mutableIntStateOf(0) }
     var editingName by rememberSaveable { mutableStateOf(false) }
     DisposableEffect(Unit) {
@@ -78,49 +87,50 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
     }
     @Suppress("UNUSED_VARIABLE") val refresh = tick
     val service = PhoneUseService.current
-    val paused = service?.controller?.gate?.paused == true
-    val status = service?.stateMessage() ?: R.string.service_stopped
     val serviceError = PhoneUseService.lastError
+    val status = (service?.stateMessage() ?: if (serviceError == null) R.string.service_starting else R.string.service_unavailable).let {
+        if (it == R.string.launch_unconfirmed_notification) R.string.launch_unconfirmed_status else it
+    }
     val accessibility = PhoneAccessibilityService.current != null
+    val keepAliveEnabled = keepAlive.enabled
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        AccessibilityPermissionCard(accessibility, onAccessibilitySettings)
         DeviceCard(identity, identity.name, onEdit = { editingName = true })
         SectionCard {
             Text(stringResource(R.string.control_service), style = MaterialTheme.typography.titleMedium)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.size(8.dp).background(
-                    if (service != null && !paused) MaterialTheme.colorScheme.primary
+                    if (service != null) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.outline, CircleShape
                 ))
                 Text(stringResource(status), style = MaterialTheme.typography.bodyMedium)
             }
-            if (service == null) {
-                Button(onClick = onStartService, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.start_http_service)) }
-                serviceError?.let { Text(stringResource(it.messageRes, it.detail), color = MaterialTheme.colorScheme.error) }
-            } else {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { service.setPaused(!service.controller.gate.paused); tick++ }) {
-                        Text(stringResource(if (paused) R.string.resume_control else R.string.pause_control))
-                    }
-                    OutlinedButton(onClick = { service.stopEndpoint(); tick++ }) { Text(stringResource(R.string.stop_service)) }
-                }
-            }
-            HorizontalDivider()
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(stringResource(R.string.accessibility_title), style = MaterialTheme.typography.bodyLarge)
-                    Text(stringResource(if (accessibility) R.string.accessibility_ready else R.string.accessibility_needed),
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                TextButton(onClick = onAccessibilitySettings) {
-                    Text(stringResource(if (accessibility) R.string.manage else R.string.enable))
-                }
+            if (service == null && serviceError != null) {
+                Text(stringResource(serviceError.messageRes, serviceError.detail), color = MaterialTheme.colorScheme.error)
+                Button(onClick = onRetryService, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.retry_service)) }
             }
             Text(stringResource(R.string.keep_unlocked), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(if (keepAliveEnabled) R.string.keep_alive_status_enabled else R.string.keep_alive_status_disabled),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (keepAliveEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = onOpenSettings) { Text(stringResource(R.string.keep_alive_settings)) }
+            }
+            Text(
+                stringResource(if (keepAliveEnabled) R.string.keep_alive_dashboard_enabled_help else R.string.keep_alive_dashboard_disabled_help),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+        AppLaunchCard(launchGuidance.unconfirmedPackage, onDismiss = { launchGuidance.clearWarning(); tick++ })
         if (service != null) {
             PairingRequestsCard(service, tick, onRefresh = { tick++ })
             ConnectionCard(tick, onOpenWebConsole)

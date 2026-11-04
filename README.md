@@ -1,110 +1,87 @@
-# Phone Use
+<div align="center">
+  <img src="design/icon/phone-use-round.png" width="80" alt="Phone Use">
+  <h1>Phone Use</h1>
+  <p><strong>Give AI agents control of your Android phone.</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/Android-11%2B-3DDC84?logo=android&logoColor=white" alt="Android 11+">
+    <a href="docs/integrations.md"><img src="https://img.shields.io/badge/Agent-Skill%20%7C%20MCP-7963D2" alt="Agent Skill and MCP"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue" alt="MIT License"></a>
+  </p>
+  <p><a href="https://github.com/nidhoggfgg/PhoneUse/releases/latest"><strong>Download APK</strong></a> · <a href="#quick-start">Quick start</a> · <a href="#examples">Examples</a> · <a href="docs/usage.md">Docs</a></p>
+  <p><strong>English</strong> | <a href="README.zh-CN.md">简体中文</a></p>
+</div>
 
-**English** | [简体中文](README.zh-CN.md)
+Phone Use connects your existing AI agent to your phone through **Skill or MCP**. The agent can read the screen, tap, swipe, type, and switch apps—**no root, ADB, or per-app integration required**.
 
-Give AI agents a way to see and interact with an Android phone—with approval on the device.
+## Features & advantages
 
-Phone Use runs an observation and control service on Android 11+. It exposes accessibility trees, screenshots, and device actions through a JSON API, MCP, and an installable agent Skill. The phone service needs no root, ADB, or model backend. An AI client runs separately and connects over your local network.
+| Feature | How Phone Use helps |
+| --- | --- |
+| **No ADB required** | Compared with ADB-based control, everyday use only requires installing the app, enabling Accessibility, and pairing over the network. No USB debugging or cable is needed. |
+| **Easy integration with AI agents** | Skill, MCP, Python CLI, and HTTP API interfaces connect agents that support these tools and fit into custom automation workflows, without tying you to a particular model or agent framework. |
+| **Screenshots + an optimized UI tree** | Compared with screenshot-only control, agents can also read interface text, element states, and available actions directly, then act by element ID. Screenshots and coordinate actions also support games and custom-drawn interfaces. |
+| **AI-friendly, with lower token overhead** | Compared with raw UI tree dumps, the default compact output filters out invisible nodes and nodes with no useful content or actions, and omits redundant state fields. Semantic folding, focused observations, and tree-only requests further reduce unnecessary information and token usage. |
+| **HTTPS and pairing by default** | Remote connections use HTTPS encryption by default. Skill/MCP clients require an eight-digit code comparison on both ends and approval on the phone, then verify the pinned public key on subsequent connections. Revoke any client from the phone at any time. See [transport security](docs/transport-security.md). |
+| **Built for multiple phones and larger workflows** | One bridge can manage multiple phones, with explicit device IDs, concurrent execution across devices, ordered execution per device, batch calls, and optional time-limited device reservations for automation and testing. |
+| **Personal remote control, too** | Connect a single phone and let your own agent operate it, or call tools directly through the CLI or built-in Web console. The controller must be able to reach the phone's address; the project does not provide a cloud relay. |
 
-## What you can do
+## Examples
 
-- **Observe the screen:** compact UI trees, JPEG screenshots, full trees on demand, and explicit waits for an app or element.
-- **Interact with apps:** tap, long-press, swipe, scroll, replace or insert text, launch apps, and use Back, Home, or Recents.
-- **Connect your preferred client:** use the built-in web console, Python CLI, MCP bridge, or `phone-use` Skill.
-- **Use multiple devices:** route every call by device ID; different devices can run independently.
-- **Keep control on the phone:** approve each client locally, revoke access, and pause or stop the service from the notification.
-
-The app supports English and Simplified Chinese, with a system-language option. The web console follows the browser language and falls back to English.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <p><strong>Compare prices on Xianyu</strong><br>Collect 29 RAM offers and check item details.</p>
+      <a href="docs/images/secondhand-shopping.webp"><img src="docs/images/secondhand-shopping.webp" width="100%" alt="AI browsing secondhand RAM listings on Xianyu and organizing prices by specification"></a>
+    </td>
+    <td width="50%" valign="top">
+      <p><strong>Catch up on QQ messages</strong><br>Review recent chats and find messages worth a reply.</p>
+      <a href="docs/images/message-review.webp"><img src="docs/images/message-review.webp" width="100%" alt="AI reviewing QQ conversations and summarizing messages that may need a reply"></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <p><strong>Play a roguelike</strong><br>Explore, fight, and clear the first floor as a mage.</p>
+      <a href="docs/images/roguelike.webp"><img src="docs/images/roguelike.webp" width="100%" alt="AI playing a mage, reaching the second dungeon floor, and recapping the run"></a>
+    </td>
+    <td width="50%" valign="top">
+      <p><strong>Discover people on Soul</strong><br>Follow profiles and summarize their interests.</p>
+      <a href="docs/images/social-discovery.webp"><img src="docs/images/social-discovery.webp" width="100%" alt="AI browsing Soul profiles and summarizing the interests of accounts it followed"></a>
+    </td>
+  </tr>
+</table>
 
 ## Quick start
 
-### 1. Build and install
+You'll need an **Android 11+ phone** and an **AI agent that can run programs**, with **Python 3.10+** in its execution environment. Connect the phone and agent's computer to the same Wi-Fi, or another network where the phone is reachable.
 
-You need **JDK 25** and an Android SDK installation with **API 37**. The repository pins Gradle **9.7.1** and Android Gradle Plugin **9.4.0**. Configure your SDK in Android Studio or an untracked `local.properties` file.
+1. **Install the app.** [Download the APK](https://github.com/nidhoggfgg/PhoneUse/releases/latest), install it on your phone, and open Phone Use.
+2. **Grant permissions.** Enable **Accessibility** and allow notification and local-network permissions when prompted.
+3. **Connect your agent.** In **Connect your AI**, select a reachable phone address, tap **Copy prompt**, and send the whole prompt to your agent. It installs the Skill and starts pairing.
 
-```sh
-# macOS / Linux
-./gradlew :app:assembleDebug
-```
+For the first connection, compare the **eight-digit code** on your phone with the one shown by the agent. If they match, approve on the phone and tell the agent you've confirmed the match.
 
-```powershell
-# Windows PowerShell
-.\gradlew.bat :app:assembleDebug
-```
+**Pair once, then just ask your agent to use your phone.** Pairings survive restarts; removing pairing data or revoking access requires pairing again. Keep the phone awake and unlocked during use.
 
-Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11 or later. See [development and validation](docs/validation.md) for checks and emulator tests.
+### Manual Skill installation
 
-### 2. Start the phone service
-
-1. Open Phone Use and enable its accessibility service in Android settings. Some devices require allowing restricted settings for a sideloaded app first.
-2. Start the service and allow notifications. On Android 17+, grant local network permission when requested.
-3. Keep the phone awake and unlocked for input. Connect your client machine to a network that can reach the IPv4 address shown in the app.
-
-### 3. Pair a client
-
-Connect with the Python client or MCP bridge using `https://PHONE_IPV4:8443`. Compare all eight digits with the phone, approve there, and confirm the match in the client. No certificate installation or long fingerprint copy is needed. Direct browser access requires separate certificate trust.
-
-Pairing persists across client and app restarts until revoked or its stored credentials are removed. The browser and MCP bridge pair separately by default. Accessibility is required for device interaction; pairing and status queries can work without it.
-
-**Transport:** port 8443 uses HTTPS with per-device public-key binding. First pairing requires an eight-digit comparison and confirmation on both sides; subsequent connections verify the saved key automatically. Old HTTP credentials require new pairing. See [connection details](docs/usage.md).
-
-## Connect an AI agent
-
-For installation through GitHub, use **Node.js 22.20+**, **Git**, and **Python 3.10+**. The AI host must be able to run local programs and reach the phone. Choose either integration:
-
-### Agent Skill
+With **Node.js 22.20+**, **Git**, and **Python 3.10+** installed:
 
 ```sh
 npx skills add nidhoggfgg/phone-use-skills --skill phone-use
 ```
 
-Select your AI client and installation scope. Then ask it:
+Choose your agent and installation scope, then send it the following, replacing the address with the **HTTPS address shown in the app**:
 
-> Use $phone-use to connect to https://192.168.1.20:8443. Show me the verification code, wait for my approval on the phone, then inspect the current screen.
+> Use the phone-use Skill to connect to https://192.168.1.20:8443. Show me the pairing code and wait for my confirmation.
 
-### MCP
-
-Configure your AI client to start this stdio server:
-
-```sh
-npx -y --package=github:nidhoggfgg/PhoneUse phone-use
-```
-
-Generate a configuration snippet with `phone-use print-config`, or `phone-use print-config --host codex`, using the same `npx` prefix. The bridge handles pairing and stored credentials without exposing tokens to the model.
-
-The [AI integration guide](docs/integrations.md) includes full commands, Windows setup, first connection, updates, and offline packages. GitHub installation requires access to this repository; the package name does not imply an npm registry release.
-
-## Python CLI
-
-The CLI uses Python 3.10+ and the standard library only. From a repository checkout:
-
-```sh
-python tools/phoneuse_client.py pair --url https://192.168.1.20:8443 --name laptop
-python tools/phoneuse_client.py list-devices
-python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
-python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg
-```
-
-Replace `DEVICE_ID` with the ID returned by pairing. Credentials are managed in `~/.phoneuse.json`; do not commit or distribute that file. See the [usage guide](docs/usage.md) for actions, JSON arguments, reconnection, and batches.
-
-## Execution model and limitations
-
-Actions execute once by default. Waiting, observing, and verifying the result are explicit client decisions. Every input action needs a unique `request_id`; after a network error, query the original request instead of replaying it under a new ID.
-
-An `executed` result means Android accepted the action or completed the gesture—it does not prove the app task succeeded. Trees and screenshots are collected separately, and protected windows, custom controls, keyboards, and vendor background policies can limit what is available. Physical-device coverage remains incomplete; see the [validation guide](docs/validation.md).
+Complete the same code check above. The Skill handles both pairing and phone control; no separate MCP setup is needed.
 
 ## Documentation
 
-| Guide | Contents |
-| --- | --- |
-| [Usage and connections](docs/usage.md) | Web console, CLI, pairing, language settings, troubleshooting |
-| [AI integrations](docs/integrations.md) | Skill and MCP installation, configuration, updates, offline distribution |
-| [API reference](docs/api.md) | Tools, parameters, observation semantics, errors, request retention |
-| [Development and validation](docs/validation.md) | Build checks, emulator fixtures, physical-device acceptance |
-| [Contributing](CONTRIBUTING.md) | Changes, bug reports, documentation conventions |
+[Usage & troubleshooting](docs/usage.md) · [Skill & MCP setup](docs/integrations.md) · [API reference](docs/api.md) · [Build from source](docs/validation.md)
 
-Each current guide has an English / 简体中文 switch at the top.
+[Contributing](CONTRIBUTING.md) · [Report an issue](https://github.com/nidhoggfgg/PhoneUse/issues) · [Security policy](SECURITY.md)
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)

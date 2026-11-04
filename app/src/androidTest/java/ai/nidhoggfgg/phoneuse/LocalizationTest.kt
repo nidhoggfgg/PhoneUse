@@ -1,6 +1,5 @@
 package ai.nidhoggfgg.phoneuse
 
-import ai.nidhoggfgg.phoneuse.device.localControlLabels
 import android.content.Context
 import android.content.res.Configuration
 import android.os.LocaleList
@@ -32,16 +31,4 @@ class LocalizationTest {
         assertEquals("剩余 2 秒", chinese.resources.getQuantityString(R.plurals.pairing_seconds_remaining, 2, 2))
     }
 
-    @Test fun notificationProtectionIncludesBothLocalesRegardlessOfCurrentLanguage() {
-        val english = localized("en-US")
-        val chinese = localized("zh-CN")
-        val labels = localControlLabels(english)
-        assertEquals(labels, localControlLabels(chinese))
-        for (id in listOf(R.string.notification_pause, R.string.notification_resume, R.string.notification_stop)) {
-            assertNotEquals(english.getString(id), chinese.getString(id))
-            assertTrue(labels.contains(english.getString(id)))
-            assertTrue(labels.contains(chinese.getString(id)))
-        }
-        assertEquals(6, labels.size)
-    }
 }

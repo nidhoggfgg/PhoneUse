@@ -11,12 +11,12 @@ function newRequestId() {
 }
 let selectedTool = '';
 let credential = null, pending = null, tools = [], busy = false, generation = 0, reconnectTimer;
+let pairingPollActive = false;
 try {
   pending = JSON.parse(sessionStorage.getItem('phoneuse.pairing') || 'null');
 } catch { sessionStorage.removeItem('phoneuse.pairing'); }
 $('endpoints').textContent = t('endpoints', { origin: location.origin });
 const messages = {
-  PAUSED: t('error_paused'),
   CANCELLED: t('error_cancelled'),
   UNAUTHORIZED: t('error_unauthorized'),
   STALE_OBSERVATION: t('error_stale_observation')
@@ -126,6 +126,8 @@ async function loadTools() {
   else if (tools.length) selectTool(tools[0].name);
 }
 async function pollPairing() {
+  if (pairingPollActive) return;
+  pairingPollActive = true;
   const current = ++generation;
   $('verification').textContent = pending.verification_code;
   $('pair-status').textContent = t('pairing_instructions');
@@ -144,7 +146,7 @@ async function pollPairing() {
       }
     }
   } catch (error) { notice(error); }
-  finally { pending = null; sessionStorage.removeItem('phoneuse.pairing'); $('verification').textContent = ''; controls(); }
+  finally { pairingPollActive = false; pending = null; sessionStorage.removeItem('phoneuse.pairing'); $('verification').textContent = ''; controls(); }
   if (credential) await connect();
 }
 $('pair').onclick = async () => {
@@ -187,6 +189,8 @@ function resultStatus(value) {
     const progress = result.observation_purpose === 'after_rejection' && result.action_executed === false ? t('progress_recovery') : result.action_executed === true ? t('progress_observing') : t('progress_executing');
     return t('result_executing', { progress });
   }
+  if (result.error?.reason === 'launch_not_confirmed') return t('launch_not_confirmed');
+  if (result.error?.reason === 'launch_permission_denied') return t('launch_permission_denied');
   if (result.state === 'unknown') return t('result_unknown');
   const recovery = recoveryLabels[result.recovery?.category];
   const hint = recovery ? t('recovery_hint', { recovery }) : '';
@@ -273,7 +277,9 @@ async function connect() {
   await execute(loadTools);
 }
 async function restoreConnection() {
-  if (busy) return;
+  // Focus/online events must not race approval with an older, unpaired session response.
+  // A reloaded tab can still check its cookie before resuming the saved pairing request.
+  if (busy || pairingPollActive) return;
   clearTimeout(reconnectTimer);
   busy = true; controls();
   let restored = false;

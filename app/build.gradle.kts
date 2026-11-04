@@ -13,8 +13,8 @@ android {
         applicationId = "ai.nidhoggfgg.phoneuse"
         minSdk = 30
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -36,7 +36,7 @@ android {
         buildConfig = true
     }
     bundle {
-        // Local notification protection needs every translated action label, even after a locale change.
+        // Keep translated notifications available after an app language change.
         language { enableSplit = false }
     }
 }
@@ -66,3 +66,42 @@ dependencies {
 tasks.matching { it.name == "connectedDebugAndroidTest" }.configureEach {
     dependsOn(":fixture:installDebug")
 }
+
+// Ship the current source client and references, never credentials or arbitrary skill files.
+// Stable ZIP metadata makes the digest in a copied onboarding URL reproducible.
+val bundledSkillFiles = mapOf(
+    "LICENSE" to "LICENSE",
+    "SKILL.md" to "skills/phone-use/SKILL.md",
+    "README.zh-CN.md" to "skills/phone-use/README.zh-CN.md",
+    "agents/openai.yaml" to "skills/phone-use/agents/openai.yaml",
+    "scripts/phoneuse_client.py" to "tools/phoneuse_client.py",
+    "references/api.md" to "docs/api.md",
+    "references/api.zh-CN.md" to "docs/api.zh-CN.md",
+    "references/transport-security.md" to "docs/transport-security.md",
+    "references/transport-security.zh-CN.md" to "docs/transport-security.zh-CN.md",
+)
+val bundlePhoneUseSkill = tasks.register<Zip>("bundlePhoneUseSkill") {
+    archiveFileName.set("phone-use.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("generated/skillAssets"))
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    includeEmptyDirs = false
+    bundledSkillFiles.forEach { (target, source) ->
+        from(rootProject.file(source)) {
+            into("phone-use/" + target.substringBeforeLast('/', ""))
+            rename { target.substringAfterLast('/') }
+        }
+    }
+    doFirst {
+        bundledSkillFiles.values.forEach { source ->
+            check(rootProject.file(source).isFile) {
+                "Missing $source; run git submodule update --init --recursive"
+            }
+        }
+    }
+}
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(bundlePhoneUseSkill, Zip::getDestinationDirectory)
+}
+// Zip declares archiveFile as its output, not destinationDirectory, so wire execution explicitly.
+tasks.named("preBuild").configure { dependsOn(bundlePhoneUseSkill) }

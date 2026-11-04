@@ -1,0 +1,21 @@
+* text=auto
+
+# Keep Unix entry points runnable after Windows checkouts.
+gradlew text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.mjs text eol=lf
+
+# Preserve native Windows launcher line endings.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Do not attempt line-ending conversion on binary assets.
+*.jar binary
+*.png binary
+*.webp binary
+*.jpg binary
+*.jpeg binary
+*.keystore binary
+*.jks binary
+*.p12 binary

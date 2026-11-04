@@ -4,6 +4,7 @@ import ai.nidhoggfgg.phoneuse.core.DeviceError
 import ai.nidhoggfgg.phoneuse.core.DeviceController
 import ai.nidhoggfgg.phoneuse.core.json
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
+import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
 import ai.nidhoggfgg.phoneuse.device.PhoneAccessibilityService
 import android.app.UiAutomation
 import android.os.ParcelFileDescriptor
@@ -66,6 +67,25 @@ class ImprovementFixtureTest {
     }
 
     @Before fun backendForTest() { backend = AndroidBackend(InstrumentationRegistry.getInstrumentation().targetContext) }
+
+    @Test fun launchAppConfirmsTheRealForegroundAndClearsPermissionReminder() {
+        val guidance = AppLaunchGuidance(InstrumentationRegistry.getInstrumentation().targetContext)
+        val original = guidance.unconfirmedPackage
+        try {
+            shell("am force-stop $FIXTURE")
+            // Wait for Home to finish; an asynchronous Home action can overtake the launch.
+            shell("am start -W -a android.intent.action.MAIN -c android.intent.category.HOME")
+            guidance.recordUnconfirmed(FIXTURE)
+            val result = backend.act("launch_app", json("package_name" to FIXTURE)) {}
+            assertEquals("foreground_observed", result.getString("confirmation"))
+            assertEquals(FIXTURE, result.getString("package_name"))
+            val root = PhoneAccessibilityService.current!!.rootInActiveWindow
+            try { assertEquals(FIXTURE, root?.packageName?.toString()) } finally { root?.recycle() }
+            assertNull(guidance.unconfirmedPackage)
+        } finally {
+            if (original == null) guidance.clearWarning() else guidance.recordUnconfirmed(original)
+        }
+    }
 
     private fun launch(scenario: String, delayMs: Int = 2200) {
         shell("am force-stop $FIXTURE")

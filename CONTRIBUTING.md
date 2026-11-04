@@ -8,6 +8,8 @@ Include the app revision, device model and Android version, client/host version,
 
 Remove credentials, pairing secrets, personal screen contents, and machine-specific paths from reports. Do not attach `~/.phoneuse.json` or real account data. This project uses the [MIT License](LICENSE).
 
+For a suspected vulnerability, follow the private reporting process in the [security policy](SECURITY.md) instead of opening a detailed public issue.
+
 ## Make a change
 
 Initialize the Skills submodule with `git submodule update --init --recursive` after cloning or pulling. Before editing it, run `git -C skills switch main`. Push Skills changes to [phone-use-skills](https://github.com/nidhoggfgg/phone-use-skills) first, then commit the updated `skills` pointer in this repository. See the [maintenance workflow](docs/integrations.md#maintenance-and-offline-packages).
@@ -19,7 +21,7 @@ In a pull request, describe what changed, how you checked it, and what remains u
 ## Documentation and translations
 
 - English is the default in `README.md` and ordinary guide paths. Simplified Chinese uses sibling `*.zh-CN.md` files. Put reciprocal language links below each title and keep internal navigation in the selected language.
-- Update both versions when changing behavior or setup. Preserve API/tool names, JSON keys, flags, paths, and example identifiers. Historical records under `docs/history/` retain their original language and are explicitly labeled.
+- Update both versions when changing behavior or setup. Preserve API/tool names, JSON keys, flags, paths, and example identifiers.
 - `docs/api.md` and `docs/api.zh-CN.md` are the canonical protocol references. Run `python tools/sync_skill.py` after editing them, and commit their generated copies under `skills/phone-use/references/` in the submodule before updating the main repository pointer.
 - `skills/phone-use/SKILL.md` is the English machine-facing entry point. Its Chinese companion is `README.zh-CN.md`, without Skill frontmatter, so installers do not discover duplicate Skills.
 - When adding distributed documentation, update `tools/export_integrations.py` and the npm `files` list as needed. Check both repository and extracted-package links.

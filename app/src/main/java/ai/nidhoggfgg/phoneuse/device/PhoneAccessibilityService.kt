@@ -3,6 +3,7 @@ package ai.nidhoggfgg.phoneuse.device
 import android.accessibilityservice.AccessibilityService
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
+import ai.nidhoggfgg.phoneuse.PhoneUseService
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -42,7 +43,13 @@ class PhoneAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onServiceConnected() { current = this; record("SERVICE_CONNECTED", -1) }
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        current = this
+        record("SERVICE_CONNECTED", -1)
+        // System rebinding can happen without an activity (for example after process reclamation).
+        PhoneUseService.restoreIfEnabled(this)
+    }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event != null && event.eventType and (
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED or

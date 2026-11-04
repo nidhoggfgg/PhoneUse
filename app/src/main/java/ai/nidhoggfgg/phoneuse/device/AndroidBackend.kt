@@ -5,6 +5,7 @@ import ai.nidhoggfgg.phoneuse.voice.VoiceProvider
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.app.KeyguardManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -34,7 +35,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         val width: Int, val height: Int, val rotation: Int, val created: Long,
         val nodes: Map<String, ElementReference>, val exported: Set<String>)
     private val snapshots = SnapshotStore<Snapshot>({ SystemClock.elapsedRealtime() })
-    private val localControlLabels by lazy { localControlLabels(context) }
+    private val launchGuidance by lazy { AppLaunchGuidance(context) }
     private fun service() = PhoneAccessibilityService.current ?: fail("ACCESSIBILITY_UNAVAILABLE", "Enable Phone Use accessibility service")
     private fun ready(): PhoneAccessibilityService {
         val service = service()
@@ -69,6 +70,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         "observation_timeout_max_ms" to 60_000, "condition_matching" to "exact fields; AND; unique by default, explicit exists supported",
         "tree_output_modes" to JSONArray(listOf("decision", "legacy")), "tree_output_default" to "decision",
         "observe_after_default" to false,
+        "launch_confirmation_timeout_ms" to AppLaunchConfirmation.TIMEOUT_MS,
         "observation_scope" to "output projection only; subtree references revalidated",
         "coordinate_observation_required" to true, "service_instance_id" to serviceInstanceId,
         "deduplication_ttl_ms" to 600_000, "deduplication_scope" to "client + request_id, current server process",
@@ -122,7 +124,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                         }
                     }
                 } catch (error: Exception) {
-                    if ((error as? DeviceError)?.code in setOf("CANCELLED", "PAUSED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
+                    if ((error as? DeviceError)?.code in setOf("CANCELLED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
                     readableTree = false
                     treeReason = (error as? DeviceError)?.code ?: "TREE_UNAVAILABLE"
                 } finally { root?.recycle() }
@@ -137,7 +139,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 val screenshot = if (mode != "tree") {
                     try { screenshot(service, maxDimension, budget, captureCheck) }
                     catch (error: Exception) {
-                        if ((error as? DeviceError)?.code in setOf("CANCELLED", "PAUSED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
+                        if ((error as? DeviceError)?.code in setOf("CANCELLED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
                         json("available" to false, "reason" to ((error as? DeviceError)?.code ?: "SCREENSHOT_UNAVAILABLE"))
                     }.put("started_at_ms", screenshotStarted).put("finished_at_ms", System.currentTimeMillis())
                 } else null
@@ -258,10 +260,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             check()
             if (++examined > 1500 || depth > 40) fail("LOCAL_CONTROL_UI", "Local control protection could not finish within its budget")
             val own = node.packageName?.toString() == context.packageName
-            val label = node.text?.toString().orEmpty()
-            val description = node.contentDescription?.toString().orEmpty()
-            val local = own || localControlLabels.any { it.equals(label, ignoreCase = true) || it.equals(description, ignoreCase = true) }
-            if (local && (own || node.isVisibleToUser)) {
+            if (own) {
                 val bounds = Rect(); node.getBoundsInScreen(bounds)
                 if (points == null || pathIntersectsRegion(points, listOf(ScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom))))
                     fail("LOCAL_CONTROL_UI", "Phone Use authorization controls can only be operated locally")
@@ -593,10 +592,32 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 if (!service.performGlobalAction(action)) fail("ACTION_REJECTED", "Android rejected navigation")
             }
             "launch_app" -> {
-                val intent = context.packageManager.getLaunchIntentForPackage(args.string("package_name"))
+                val packageName = args.string("package_name")
+                val intent = context.packageManager.getLaunchIntentForPackage(packageName)
                     ?: fail("APP_UNAVAILABLE", "Application is not discoverable or launchable")
                 check()
-                service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                try {
+                    service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: ActivityNotFoundException) {
+                    fail("APP_UNAVAILABLE", "Application is no longer launchable")
+                } catch (_: SecurityException) {
+                    launchGuidance.recordUnconfirmed(packageName)
+                    fail("ACTION_REJECTED", "Android denied the launch request. ${AppLaunchGuidance.permissionHint()}",
+                        json("reason" to "launch_permission_denied", "package_name" to packageName))
+                }
+                try {
+                    return AppLaunchConfirmation(SystemClock::elapsedRealtime, Thread::sleep).awaitForeground(packageName, check) {
+                        if (ready().instanceId != service.instanceId) fail("ACCESSIBILITY_UNAVAILABLE", "Accessibility service changed")
+                        val root = service.rootInActiveWindow
+                        try { root?.packageName?.toString() } finally { root?.recycle() }
+                    }.also { launchGuidance.clearWarning() }
+                } catch (error: DeviceError) {
+                    if (error.details.optString("reason") == "launch_not_confirmed") {
+                        launchGuidance.recordUnconfirmed(packageName)
+                        throw DeviceError(error.code, "${error.message}. ${AppLaunchGuidance.permissionHint()}", error.details)
+                    }
+                    throw error
+                }
             }
         }
         return json("confirmation" to "android_accepted", "business_success" to JSONObject.NULL)

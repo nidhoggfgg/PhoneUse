@@ -4,12 +4,9 @@
 
 ## Trust and user interaction
 
-All phone endpoints use HTTPS (TLS 1.2/1.3). Android Keystore holds an independent,
-non-exportable EC P-256 key for each installation. Python pins SHA-256 of the
-certificate's DER SubjectPublicKeyInfo (SPKI), not its IP address or a JSON field.
-No HTTP fallback, redirects, shared private key, or trust-all authenticated
-connection exists. The initial credential-free identity probe is explicitly
-unauthenticated; its observed pin is only a candidate until pairing is confirmed.
+Port 8443 detects HTTP and TLS on the same listener. HTTPS (TLS 1.2/1.3) does not require a transport switch. The default HTTP exception is limited to connections whose actual source and receiving IP are both `127.0.0.1`, with `Host: 127.0.0.1:8443`. All other HTTP, including `::1`, other loopback IPs and whitelisted domains routed through localhost, requires the persistent, default-off **Allow insecure HTTP connections** setting. Forwarding headers cannot grant this exception. Every HTTP and HTTPS request also passes the access address allowlist below: listing an address does not enable HTTP, and enabling HTTP does not bypass the allowlist. Disallowed HTTP is rejected before pairing, authentication or route handling. Disabling the setting closes HTTP sockets that depend on it and invalidates their queued work and ongoing observations, without affecting HTTPS or the local `127.0.0.1` console.
+
+Android Keystore holds an independent, non-exportable EC P-256 key for each installation. Python pins SHA-256 of the certificate's DER SubjectPublicKeyInfo (SPKI), not its IP address or a JSON field. Native clients retain HTTPS-only behavior: no HTTP fallback, redirects, shared private key, or trust-all authenticated connection. The initial credential-free identity probe is unauthenticated; its observed pin is only a candidate until pairing is confirmed.
 
 First pairing requires the user to compare **all eight digits** shown independently
 by the phone and bridge, approve on the phone, and confirm the match on the
@@ -68,8 +65,7 @@ code `17242944`.
 
 ## Persistence, migration, and key changes
 
-The phone key survives service/app restarts. Credentials use a new storage namespace
-so previously exposed HTTP tokens cannot authorize HTTPS control. The Python
+The phone key survives service/app restarts. The HTTPS migration uses a separate credential namespace from historical HTTP-only releases; tokens from those releases remain invalid. Enabling optional HTTP does not reset existing pairings. The Python
 registry migrates old addresses to HTTPS but discards unpinned credentials and
 pending claims. Both sides must be updated and paired again once.
 
@@ -84,13 +80,11 @@ The phone key and identity/credential preferences are not backed up or migrated.
 
 ## Browser boundary
 
-Direct browser access remains an HTTPS endpoint and uses Secure, HttpOnly,
-SameSite=Strict cookies and strict IP Host/HTTPS Origin checks. Browser JavaScript
-cannot authenticate an untrusted certificate on behalf of the browser. Its older
-six-digit authorization code is not the native eight-digit SAS protocol and cannot
-replace certificate trust. Establish browser certificate trust independently;
-do not blindly bypass its warning. Use MCP/CLI for the automatic native trust flow.
-This change does not add a local browser proxy, domain provisioning, or public CA.
+HTTPS browser sessions retain Secure, HttpOnly, SameSite=Strict cookies named `phoneuse_client_PORT`. HTTP sessions use a separate `phoneuse_http_client_PORT` cookie with HttpOnly and SameSite=Strict, without Secure. Each transport only reads its own cookie. HTTP still requires normal pairing and authorization, but provides neither encryption nor TLS server authentication; network observers may read screen content, actions and credentials. Native clients keep their existing TLS pinning flow.
+
+With an empty access address allowlist, Host is restricted to the receiving IP and service port, so arbitrary domains are rejected. A nonempty list replaces this default with exact configured IP/domain matches at the service port; phone IPs and loopback must also be listed to remain usable. The list is checked for each request, including the landing page, identity, pairing, API and MCP. It checks the destination Host, not the client's source IP, and does not replace authentication or act as a source-IP firewall. Origin, when present, must match the request scheme, Host and port; same-site and cross-site API requests are rejected, with no CORS bypass. Only `GET /` permits cross-site navigation from Android's browser launcher, never pairing, scripts or APIs. An unlisted domain resolving to the phone is not allowed; allowing a domain does not allow its subdomains. IPv4 and IPv6 literals are supported. Allowlist entries do not provision DNS, routing, port forwarding, a reverse proxy or a public CA certificate.
+
+Browser JavaScript cannot authenticate an untrusted HTTPS certificate on behalf of the browser. The browser's six-digit authorization code is not the native eight-digit SAS protocol and cannot replace certificate trust. Establish HTTPS browser certificate trust independently; do not blindly bypass its warning. The local app button opens `http://127.0.0.1:8443/` and is disabled if a nonempty allowlist omits `127.0.0.1`. Add that address or clear the list in Settings to restore it.
 
 Validation includes Kotlin/Python transcript vectors, actual loopback TLS pinning,
 substituted-key rejection before HTTP data, confirmation gating, migration, and

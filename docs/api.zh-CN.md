@@ -4,7 +4,7 @@
 
 ## 接入与身份
 
-监听 IPv4 `0.0.0.0:8443`，**仅支持 TLS 1.2/1.3 HTTPS**。每次安装在 Android Keystore 内生成不可导出的独立密钥与自签证书。原生客户端通过短码核对绑定 SHA-256 SPKI 公钥指纹，无需公共 CA 或复制长指纹。旧 HTTP 凭证失效，需重新配对。
+服务在 `8443` 同端口识别 **TLS 1.2/1.3 HTTPS 与 HTTP**。默认 HTTP 例外要求 socket 来源、接收端以及请求 Host 均使用 `127.0.0.1`；其他 HTTP（包括 IPv6 回环和白名单域名）默认在配对／鉴权前拒绝。持久化的不安全 HTTP 设置可立即开启其他 HTTP 连接；关闭时断开相应的已有 HTTP 请求并使其排队任务失效。两种传输方式均受独立的访问地址白名单限制，仍需正常配对与鉴权。每次安装的 Android Keystore 不可导出密钥、自签证书与 SHA-256 SPKI 配对保持兼容，原生客户端继续使用公钥绑定的 HTTPS，不自动降级。
 
 ### 提交承诺 → 揭示随机数 → 双端核对确认 → 批准 → 领取
 
@@ -26,17 +26,32 @@ AI 使用 `phoneuse_connect`，不直接处理凭证。首次返回桥接本地�
 
 `GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需已配对客户端认证，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
 
-API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB，已鉴权的语音请求上限为 4 MiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `https://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
+API/MCP 接受 Bearer 授权或与传输方式对应的浏览器配对 Cookie；显式 Authorization 优先。POST 使用 `Content-Type: application/json`，支持 Content-Length 和 chunked，正文最多 64 KiB，已鉴权的语音请求上限为 4 MiB。访问地址白名单为空时，Host 必须匹配连接接收端 IP 和端口，拒绝域名；配置后，Host 必须精确匹配列表中的 IP／域名与服务端口，不再自动放行手机 IP 或回环地址。白名单检查目标地址而非客户端来源 IP，每次请求均读取当前配置。Origin 若存在，必须与请求协议和地址完全同源。拒绝 same-site 和 cross-site API 请求，不提供 CORS，不信任转发头。无 Origin 的原生客户端仍可使用。
 
-浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，浏览器依赖浏览器自身的证书信任；请求正文为 `{"client_name":"browser"}`，采用原有六位授权核对码，不执行原生八位 SAS 流程。浏览器证书警告不能由网页或桥接自动消除。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天，每次恢复会话时续期；浏览器自身的清理策略仍可能提前移除。Cookie 设置 Secure，仅在 HTTPS 中发送。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
+浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，HTTPS 浏览器依赖浏览器自身的证书信任；请求正文为 `{"client_name":"browser"}`，采用原有六位授权核对码，不执行原生八位 SAS 流程。浏览器证书警告不能由网页或桥接自动消除。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天；浏览器自身的清理策略仍可能提前移除。Cookie 设置 Secure，仅在 HTTPS 中发送。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
 
-- `GET /browser/session`：HTTP 200 返回 `{"paired":true,"client_id":"..."}` 或 `{"paired":false,"client_id":null}`，验证已有授权并续期/清除 Cookie，不签发新身份。
+HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，不设置 Secure，保留 HttpOnly、SameSite 和有效期。HTTPS 仅读取其原有 Secure Cookie，HTTP 仅读取自身 Cookie。HTTP 配对不提供传输加密或 TLS 服务器身份认证。
+
+- `GET /browser/session`：HTTP 200 返回 `{"paired":true,"client_id":"..."}` 或 `{"paired":false,"client_id":null}`，验证已有授权，不修改 Cookie 或签发新身份。
 - `POST /browser/session`：携带已有 Bearer 或 Cookie，正文 `{}`，换成同一身份的持久 Cookie。用于旧版打开标签页的自动迁移，成功后删除 sessionStorage 中的旧 token。
 - `POST /browser/forget`：需认证，正文 `{}`；撤销该客户端、清除 Cookie 与配对暂存响应，使排队动作失效。关闭页面本身不调用此接口。
 
 页面启动、重新获得焦点和网络恢复时检查连接；启动连接失败每五秒重试读取会话，保留配对。任何输入动作都不自动重试。网页不再导出长期凭证，旧 HTTP 导出凭证不可复用，必须重新配对。
 
-### AI 的持久连接
+### App 内置 Skill 分发
+
+同一个服务端口提供以下只读、无需配对的接口：
+
+| 路径（GET） | 内容 |
+| --- | --- |
+| `/connect` | AI 可直接读取的纯文本 Markdown 接入指引，包含当前 HTTPS 源地址 |
+| `/skills/manifest.json` | `schema_version`、`name`、`app_version`、`distribution:bundled`、ZIP 的 `sha256`/`size`、`archive`、`entrypoint`、`skill` 和带哈希的 `connect_url` |
+| `/skills/phone-use.zip` | 完整 `phone-use/` 目录，包含 Python 客户端、Skill 指令和接口参考；`application/zip` 附件 |
+| `/skills/phone-use/SKILL.md` | 与 ZIP 内一致的 Skill 指令预览 |
+
+只接受 GET，其他方法返回 405。`/connect` 与首页一样允许外部导航；下载仍应用同源检查，所有路由均应用地址白名单与 HTTP 开关。分发固定打包文件，不提供任意文件读取，不返回凭证或授予手机操作权限。清单不附加设备身份；App 分享链接中的 `#sha256=...` 用于校验 ZIP，片段不会发送给服务器。技能版本随 App 更新，不查询互联网最新版本。
+
+### AI 的持久连接与身份
 
 `python tools/phoneuse_client.py mcp-stdio --url https://PHONE:8443` 在未配对或手机离线时也可处理 initialize。一个桥接管理多台设备；`phoneuse_connect` 按地址添加或按 `device_id` 重连，`phoneuse_list_devices` 返回安装级 ID、名称、型号、Android 版本、地址、在线状态和模拟器标记。后续每次设备调用必须显式指定 `device_id`，不维护共享“当前设备”。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供手机工具。
 
@@ -46,7 +61,9 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 配置默认位于用户目录 `.phoneuse.json`，由桥接读写，不加入 MCP 返回；未完成配对也保存到该文件以便桥接重启后继续。401 清除已撤销凭证并提示显式调用连接工具；网络错误不删除凭证、不发起配对、不重放动作。手机仍未恢复时初始化与连接工具可用。此机制不隔离与桥接使用同一系统账户的文件访问权限。
 
-每个连接只处理一个 HTTP 请求并关闭；HTTP 连接关闭不影响配对授权。连接池和等待队列有上限。
+连接建立与耗时设备请求使用独立、有界且不排队的线程池。连接线程满时立即关闭新连接；设备请求线程满时，已认证的耗时调用返回 HTTP 503、`error.code:"BUSY"` 和 `request_admitted:false`。身份探测、状态查询和取消不占用耗时请求线程池。503 不能说明此前提交过的同一请求 ID 是否已执行（`action_executed:null`）；应查询该 ID 的 `get_status`。已接收的调用继续按现有执行/观察时限等待结果。
+
+每个连接只处理一个 HTTP 请求并关闭；HTTP 连接关闭不影响配对授权。
 
 ## 普通 API
 
@@ -61,7 +78,7 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 | 工具 | 参数 |
 | --- | --- |
 | get_capabilities | 无 |
-| get_status | 可选 request_id，只能查询本客户端结果；返回 paused、stopped、executing_request_id |
+| get_status | 可选 request_id，只能查询本客户端结果；返回 paused（兼容字段，始终为 false）、stopped、executing_request_id |
 | cancel | 可选 request_id，不传则取消本客户端所有未完成输入 |
 | observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280；compact：默认 true；stable_wait_ms：0–2000，默认 0（不等待）；max_attempts：1–3，默认 3；timeout_ms、wait_until、output、diagnostics、include_details、region、subtree 见下文 |
 | acquire_device | 可选 ttl_ms：1000–300000，默认 60000；续期必须携带当前 lease_id |
@@ -105,7 +122,7 @@ Phone Use 在按下前为目标 App 的 UID 准备录音通道。按下后最多
 - `expected_window_id`：预期的活动窗口。
 - `observe_after`：动作后附带新观察，默认 false。
 - `observation_options`：复用 `observe` 的观察参数；仅在 `observe_after:true` 或 `observe_on_rejection:true` 时允许。不是动作目标参数，不能包含 request_id、device_id 等字段。
-- `observe_on_rejection`：默认 false；在目标校验类错误已经终止且确认 `action_executed:false` 时，按需附带 `recovery_observation`。暂停、撤销、停止等读取限制仍生效，附带观察错误不会覆盖原动作错误。
+- `observe_on_rejection`：默认 false；在目标校验类错误已经终止且确认 `action_executed:false` 时，按需附带 `recovery_observation`。撤销授权、服务销毁等读取限制仍生效，附带观察错误不会覆盖原动作错误。
 - `lease_id`：可选的开发者测试占用；设备有占用时必须匹配占用客户端和 ID。没有占用时可直接执行动作。
 
 所有工具可携带 `device_id`、`service_instance_id`，由 HTTP 入口在分发前核验。桥接自动添加这两个保护字段，直连 API 可自行指定。所有工具结果及嵌套动作/观察结果包含 `device_id` 和 `service_instance_id`。地址不匹配返回 `DEVICE_MISMATCH`，服务实例不匹配返回 `STALE_OBSERVATION`，均明确 `action_executed:false`。
@@ -201,13 +218,15 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 ## 授权、执行与去重
 
-配对授权后可直接调用输入动作，无需申请或释放控制权。所有客户端的动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。只读请求也必须鉴权，暂停时观察/应用列表/等待被拒绝，状态与能力仍可查询。
+配对授权后可直接调用输入动作，无需申请或释放控制权。所有客户端的动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。入队后最多等待 1000 ms 开始执行，与操作本身耗时分开计时；尚未开始就超时的请求返回 `BUSY`，之后不会再执行。排队超时的动作按请求 ID 保留终态结果，`action_executed:false`。已开始的操作继续使用原有执行/观察时限。只读请求也必须鉴权。
 
-连续开发测试可选用 `acquire_device` 取得最多五分钟的占用；有未完成动作时不能新建占用，避免接管中途动作。有效期内其他客户端或缺少正确 lease_id 的输入返回 DEVICE_RESERVED；过期、释放后的旧 lease_id 返回 LEASE_EXPIRED。入队及系统输入前都再次验证，排队期间过期的动作不会执行。占用不限制只读观察，不改变配对授权。本地暂停、停止和撤销占用客户端立即清除占用；已注入动作可能完成。get_status.reservation 返回占用状态和剩余时间，不泄漏占用 ID。
+连续开发测试可选用 `acquire_device` 取得最多五分钟的占用；有未完成动作时不能新建占用，避免接管中途动作。有效期内其他客户端或缺少正确 lease_id 的输入返回 DEVICE_RESERVED；过期、释放后的旧 lease_id 返回 LEASE_EXPIRED。入队及系统输入前都再次验证，排队期间过期的动作不会执行。占用不限制只读观察，不改变配对授权。服务销毁和本地撤销占用客户端立即清除占用；已注入动作可能完成。get_status.reservation 返回占用状态和剩余时间，不泄漏占用 ID。
 
-授权凭证持续有效，直到手机端撤销。暂停阻止新操作并取消排队输入，恢复后可直接提交新动作。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
+授权凭证持续有效，直到手机端撤销。撤销后阻止该客户端的新操作并取消其排队输入。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
 
-普通动作默认只执行一次并返回执行事实，不固定延时、不采集动作后树或截图；观察缺省是正常成功结果。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
+动作只执行一次并返回执行事实，默认不采集动作后树或截图；观察缺省是正常成功结果。`launch_app` 额外检查无障碍活动窗口的包名，最多等待五秒确认目标应用进入前台；其他动作不增加隐式等待。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
+
+`launch_app` 仅在观察到目标包处于前台后返回 `execution.confirmation:"foreground_observed"`。超时返回 `state:"unknown"`、`error.code:"RESULT_UNKNOWN"`、`error.reason:"launch_not_confirmed"` 和 `action_executed:null`。请求已经发出，不自动重放；请检查应用加载、跳转确认弹窗或后台启动限制。所有厂商均显示本地提醒，并另发一条应用启动通知，不受静音服务通知及其配对状态遮挡。点击通知打开首页；重复失败合并为一条，通知仍在时不反复响铃。后续启动确认成功或在 App 内关闭提醒时清除通知。通知是否送达取决于系统通知权限与渠道设置，通知被禁用不会改变原始启动结果。首页另在恢复显示时尝试读取小米／Redmi／POCO「后台弹出界面」权限，仅在未允许或上次启动未确认时显示指引；不支持检测时保持状态未知，不常驻提醒。设置页始终保留「其他权限」入口，打不开时回退应用详情。权限标志不能证明启动成功，启动未确认也不等同于缺权限。发出请求后校验被中断仍为结果未知（`launch_confirmation_interrupted`）；Android 明确拒绝权限时返回 `ACTION_REJECTED`（`launch_permission_denied`）。启动确认不采集完整树或截图。
 
 动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。动作已执行但仍在等待观察时，顶层及 `get_status.request` 保持 `state:"executing"`、`action_executed:true`、`observation_status:"observing"`，`observation_purpose` 区分 after_action / after_rejection；未请求附带观察时省略 observation_status 和 observation_purpose。`accepted` 与 `action_executed:false` 同时出现只表示尚未执行，不能证明请求已经终止。终态：
 
@@ -220,18 +239,18 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 }
 ```
 
-- executed：Android 接受节点/导航/Intent 操作，或报告手势完成。不会声称业务成功。
+- executed：Android 接受节点/导航操作、报告手势完成，或启动目标包已被观察到处于前台。不会声称业务成功。
 - failed：校验或系统明确拒绝，含 error.code/message。
 - cancelled：尚未执行的输入被取消或控制已失效。
-- unknown：手势回调超时、部分手势取消或无法判定执行结果的异常。先重新观察，不自动重试。
+- unknown：应用启动未确认、手势回调超时、部分手势取消或无法判定执行结果的异常。先重新观察，不自动重试。
 
-执行成功但后续观察失败或条件超时仍返回 executed；observation 单独包含状态和错误。条件未满足的结果必须阻断依赖该条件的后续调用。已经注入的动作不会因通知暂停而被伪装成撤销。cancel 返回 in_flight_may_complete；手势无法保证立即终止。
+执行成功但后续观察失败或条件超时仍返回 executed；observation 单独包含状态和错误。条件未满足的结果必须阻断依赖该条件的后续调用。已经注入的动作不会因取消请求而被伪装成撤销。cancel 返回 in_flight_may_complete；手势无法保证立即终止。
 
 `recovery` 是有限类别的建议对象，包含 category、advisory:true、replay_action:false、suggested_tool 和 message，不保证下一次操作成功。排队/执行中使用 wait_original_request；unknown 使用 reconcile_result；终态未执行的目标错误、执行后观察失败或条件超时使用 refresh_observation。先区分请求是否终止，再决定观察或查询原请求；不根据 action_executed:false 单独创建替代动作。恢复观察位于 recovery_observation，失败可再嵌套 last_observation。CLI/Web 递归识别这些层级，截图附件标明来源，历史截图不改变当前条件或错误。
 
 窗口信息只作按需诊断（`diagnostics:true` 下的 windows），不要求活动应用覆盖全屏，也不需要客户端先选择输入法窗口。版本和事件历史用于解释变化，不是整页必须不变的前置条件。
 
-去重作用域为**当前服务进程的 client_id + request_id**，相同 ID 的参数和工具必须完全一致（对象键顺序忽略）。结果保留十分钟，最多 256 个 ID，并有约 800 万字符的结果缓存预算；预算满时拒绝新动作，不提前丢弃未到期的 ID。快照/截图/动作参数只在内存保存，服务停止或进程死亡后不恢复。应用不写操作日志或截图文件。
+去重作用域为**当前服务进程的 client_id + request_id**，相同 ID 的参数和工具必须完全一致（对象键顺序忽略）。结果保留十分钟，最多 256 个 ID，并有约 800 万字符的结果缓存预算；预算满时拒绝新动作，不提前丢弃未到期的 ID。快照/截图/动作参数只在内存保存，服务停止或进程死亡后不恢复。应用不写操作日志或截图文件。仅为权限提醒在本机保存最近一次未确认启动的包名，启动确认成功或用户在本机关闭提醒后清除。
 
 若已执行动作的附带观察使结果超过剩余保留预算，该观察会替换为 `observation_status:"failed"`、`error.code:"CACHE_BUDGET_EXCEEDED"`、`omitted_for_retention:true`，保留原动作 state、action_executed 及原始错误。不能因此再次发送原动作。
 
@@ -239,11 +258,11 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 重发相同 ID 返回已有结果，不再次输入，也不重新开展附带观察；不同参数返回 REQUEST_ID_CONFLICT。缓存观察的采集时间和有效期不会刷新，需要新观察时独立调用 observe。十分钟之后或进程重启后不能依据去重保证安全重放。客户端必须自行保留不确定请求，并重新观察。
 
-通知提供暂停/恢复和停止服务。暂停使排队输入失效，恢复不会重放已取消动作。撤销客户端凭证会拒绝其后续读写请求并取消其排队输入，不影响其他客户端。停止关闭 HTTP 入口，并使所有尚未执行输入失效。
+打开 App 后服务自动启动。通知显示服务状态并可打开 App，不再提供暂停、恢复或停止操作。撤销客户端凭证会拒绝其后续读写请求并取消其排队输入，不影响其他客户端。Android 销毁服务时关闭连接入口，并使所有尚未执行输入失效。
 
 ## 主要错误码
 
-INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、PAUSED、STOPPED、CANCELLED、BUSY、DEVICE_MISMATCH、DEVICE_RESERVED、LEASE_EXPIRED、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、OBSERVATION_TIMEOUT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。OBSERVATION_INCONSISTENT（采集中变化）、STALE_OBSERVATION（动作上下文失效）、STALE_ELEMENT（目标变化）分别保留，便于批量汇总。
+INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、STOPPED、CANCELLED、BUSY、DEVICE_MISMATCH、DEVICE_RESERVED、LEASE_EXPIRED、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、OBSERVATION_TIMEOUT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。OBSERVATION_INCONSISTENT（采集中变化）、STALE_OBSERVATION（动作上下文失效）、STALE_ELEMENT（目标变化）分别保留，便于批量汇总。
 
 ## MCP
 
