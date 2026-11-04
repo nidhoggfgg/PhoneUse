@@ -7,6 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 COPIES = {
     "LICENSE": "skills/phone-use/LICENSE",
     "tools/phoneuse_client.py": "skills/phone-use/scripts/phoneuse_client.py",
+    "tools/phoneuse_adb.py": "skills/phone-use/scripts/phoneuse_adb.py",
+    "tools/phoneuse_catalog.json": "skills/phone-use/scripts/phoneuse_catalog.json",
     "docs/api.md": "skills/phone-use/references/api.md",
     "docs/api.zh-CN.md": "skills/phone-use/references/api.zh-CN.md",
     "docs/transport-security.md": "skills/phone-use/references/transport-security.md",

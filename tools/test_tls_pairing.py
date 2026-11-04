@@ -1,7 +1,7 @@
 """Security regressions use actual TLS sockets as well as adversarial fake responses."""
 import copy
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import tempfile
 import threading
@@ -32,6 +32,12 @@ class TlsPairingTest(unittest.TestCase):
     def test_tls_pin_checked_before_any_http_or_bearer_bytes(self):
         seen = []
         class Handler(BaseHTTPRequestHandler):
+            def handle(self):
+                try:
+                    super().handle()
+                except ConnectionResetError:
+                    pass  # A rejected pin closes the socket before sending HTTP.
+
             def log_message(self, *args):
                 pass
             def do_GET(self):
@@ -41,7 +47,7 @@ class TlsPairingTest(unittest.TestCase):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-        server = wrap_server(ThreadingHTTPServer(("127.0.0.1", 0), Handler))
+        server = wrap_server(HTTPServer(("127.0.0.1", 0), Handler))
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
         thread.start()
         try:

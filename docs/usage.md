@@ -94,6 +94,14 @@ adb forward tcp:8443 tcp:8443
 
 Then connect with `python tools/phoneuse_client.py pair --url https://127.0.0.1:8443`. Normal network use does not require ADB.
 
+### Using App and ADB connections on one device
+
+For ADB-only operation, authorize the computer in Android debugging settings and put Android Platform Tools on PATH. Register a serial with `python tools/phoneuse_client.py connect-adb --serial SERIAL`. Use the returned `device_id` in all CLI and stdio MCP calls. To add the App, start its service, enable accessibility and run `pair --url https://PHONE:8443 --device-id DEVICE_ID` with the same client. If the App was paired first, use `connect-adb --serial SERIAL --device-id DEVICE_ID`. The bridge compares the App identity and TLS key over a temporary forward on the selected ADB device. App pairing still requires the eight-digit code.
+
+Use `call get_capabilities --device-id DEVICE_ID` to inspect the live mode and the `features` flags for `screenshot`, `selection_replace` and `send_voice`. ADB alone provides native-resolution PNG screenshots, coordinate tap/long press, two-point swipes and system navigation. Use `observe` with `{"mode":"screenshot"}`. Node trees, selection-aware editing, conditional waits and advanced observation options require the App. The bridge starts the voice helper when both connections and accessibility are available. Voice also requires a successful audio route probe and a compatible target recorder.
+
+To exercise transitions, use `disconnect --device-id DEVICE_ID --backend adb` or `--backend app`. The first leaves App editing and screenshots available. The second leaves ADB screenshots available. Reconnect using `connect-adb` or `pair`. MCP exposes the same operations through `phoneuse_connect(adb_serial=...)`, `phoneuse_connect(address=...)` and `phoneuse_disconnect`. Observe again after switching providers. If an action has an unknown outcome, query its request ID before continuing.
+
 Update both the phone and bridge. Existing HTTP addresses are migrated locally to HTTPS, but their old credentials are discarded; compare a new code and pair again. A changed TLS key is never automatically accepted. After independently verifying a deliberate reinstall/reset, revoke the old phone client and use `python tools/phoneuse_client.py forget-device --device-id DEVICE_ID` before re-pairing.
 
 If input is unavailable, check accessibility, screen lock, and client authorization. If the AI host runs in the cloud and cannot reach your LAN or run a local bridge, installing the integration alone will not provide access.

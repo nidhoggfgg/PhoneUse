@@ -13,6 +13,8 @@ PACKAGES = {
     "phoneuse-mcp": {
         "LICENSE": "LICENSE",
         "phoneuse_client.py": "tools/phoneuse_client.py",
+        "phoneuse_adb.py": "tools/phoneuse_adb.py",
+        "phoneuse_catalog.json": "tools/phoneuse_catalog.json",
         "configure.py": "integrations/mcp/configure.py",
         "README.md": "integrations/mcp/README.md",
         "README.zh-CN.md": "integrations/mcp/README.zh-CN.md",
@@ -23,6 +25,8 @@ PACKAGES = {
         "README.zh-CN.md": "skills/phone-use/README.zh-CN.md",
         "agents/openai.yaml": "skills/phone-use/agents/openai.yaml",
         "scripts/phoneuse_client.py": "skills/phone-use/scripts/phoneuse_client.py",
+        "scripts/phoneuse_adb.py": "skills/phone-use/scripts/phoneuse_adb.py",
+        "scripts/phoneuse_catalog.json": "skills/phone-use/scripts/phoneuse_catalog.json",
         "references/api.md": "skills/phone-use/references/api.md",
         "references/api.zh-CN.md": "skills/phone-use/references/api.zh-CN.md",
         "references/transport-security.md": "skills/phone-use/references/transport-security.md",

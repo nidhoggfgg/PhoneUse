@@ -3,8 +3,15 @@ package ai.nidhoggfgg.phoneuse
 import ai.nidhoggfgg.phoneuse.core.*
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.File
+import org.json.JSONArray
 
 class ToolCatalogObservationTest {
+    @Test fun adbBridgeUsesTheSameToolSchemas() {
+        val catalog = listOf(File("../tools/phoneuse_catalog.json"), File("tools/phoneuse_catalog.json")).first { it.isFile }
+        assertEquals(canonical(ToolCatalog.all()), canonical(JSONArray(catalog.readText())))
+    }
+
     @Test fun catalogDefaultsMatchImmediateIndependentCapabilities() {
         val tools = ToolCatalog.all()
         for (index in 0 until tools.length()) {

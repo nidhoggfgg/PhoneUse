@@ -339,6 +339,14 @@ class ImprovementFixtureTest {
         awaitCounter("text_requests", 1)
     }
 
+    @Test fun chineseInsertReplacesOnlyTheSelectedRange() {
+        launch("selected_range")
+        val before = awaitText("今天晴天出门")
+        action(before, "input_text", "search", json("mode" to "insert", "text" to "下雨"))
+        awaitText("今天下雨出门")
+        awaitCounter("text_requests", 1)
+    }
+
     @Test fun continuousRecommendationsAllowImmediateObservationAndConsecutiveActions() {
         launch("carousel")
         val observation = observe("target", mode = "both")

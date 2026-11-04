@@ -75,7 +75,14 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         "coordinate_observation_required" to true, "service_instance_id" to serviceInstanceId,
         "deduplication_ttl_ms" to 600_000, "deduplication_scope" to "client + request_id, current server process",
         "mcp_protocol_versions" to JSONArray(listOf("2025-03-26", "2025-06-18", "2025-11-25"))
-    )
+    ).apply {
+        val accessible = getBoolean("accessibility")
+        val voice = getJSONObject("send_voice")
+        put("mode", if (voice.getBoolean("helper_attached")) "app+adb" else "app")
+        put("features", json("selection_replace" to accessible, "screenshot" to accessible,
+            "send_voice" to (accessible && voice.getBoolean("routing_api_available"))))
+        if (!accessible) put("text_modes", JSONArray())
+    }
     override fun observe(args: JSONObject): JSONObject = observe(args, "legacy") {}
 
     override fun observe(args: JSONObject, client: String, check: () -> Unit): JSONObject {

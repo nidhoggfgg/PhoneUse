@@ -70,7 +70,7 @@ class ScenarioActivity : Activity() {
                     Counters.increment("mutations", "ready")
                 }
             }
-            "focus", "keyboard", "selection" -> {
+            "focus", "keyboard", "selection", "selected_range" -> {
                 if (scenario == "focus") body.addView(Button(this).apply {
                     id = R.id.focus_control; text = "Focus to edit"
                     setOnClickListener { Counters.increment("clicks", "focus_control"); body.removeView(this); addEditor() }
@@ -211,6 +211,10 @@ class ScenarioActivity : Activity() {
             later { editor.setSelection(0); Counters.increment("mutations", "selection") }
         }
         editor.requestFocus()
+        if (intent.getStringExtra("scenario") == "selected_range") {
+            editor.setText("今天晴天出门")
+            editor.setSelection(2, 4)
+        }
         editor.post { getSystemService(InputMethodManager::class.java).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT) }
     }
 

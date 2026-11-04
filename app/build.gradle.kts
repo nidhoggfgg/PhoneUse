@@ -13,8 +13,8 @@ android {
         applicationId = "ai.nidhoggfgg.phoneuse"
         minSdk = 30
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -75,6 +75,8 @@ val bundledSkillFiles = mapOf(
     "README.zh-CN.md" to "skills/phone-use/README.zh-CN.md",
     "agents/openai.yaml" to "skills/phone-use/agents/openai.yaml",
     "scripts/phoneuse_client.py" to "tools/phoneuse_client.py",
+    "scripts/phoneuse_adb.py" to "tools/phoneuse_adb.py",
+    "scripts/phoneuse_catalog.json" to "tools/phoneuse_catalog.json",
     "references/api.md" to "docs/api.md",
     "references/api.zh-CN.md" to "docs/api.zh-CN.md",
     "references/transport-security.md" to "docs/transport-security.md",
@@ -86,15 +88,16 @@ val bundlePhoneUseSkill = tasks.register<Zip>("bundlePhoneUseSkill") {
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
     includeEmptyDirs = false
-    bundledSkillFiles.forEach { (target, source) ->
-        from(rootProject.file(source)) {
+    val sources = bundledSkillFiles.mapValues { rootProject.file(it.value) }
+    sources.forEach { (target, source) ->
+        from(source) {
             into("phone-use/" + target.substringBeforeLast('/', ""))
             rename { target.substringAfterLast('/') }
         }
     }
     doFirst {
-        bundledSkillFiles.values.forEach { source ->
-            check(rootProject.file(source).isFile) {
+        sources.values.forEach { source ->
+            check(source.isFile) {
                 "Missing $source; run git submodule update --init --recursive"
             }
         }

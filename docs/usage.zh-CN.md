@@ -94,6 +94,35 @@ adb forward tcp:8443 tcp:8443
 
 随后使用 `python tools/phoneuse_client.py pair --url https://127.0.0.1:8443` 连接。正常网络连接不需要 ADB。
 
+### 在同一台设备上使用 App 和 ADB
+
+CLI 和 stdio MCP 可以只连 App、只连 ADB，或同时连接。仅使用 ADB 时，电脑需要能在 PATH 中找到 Android Platform Tools 的 `adb`，并已获得手机的调试授权。手机无需安装 Phone Use APK。
+
+```powershell
+adb devices -l
+python tools/phoneuse_client.py connect-adb --serial SERIAL
+python tools/phoneuse_client.py pair --url https://PHONE:8443 --device-id DEVICE_ID
+python tools/phoneuse_client.py list-devices
+python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
+```
+
+把 `SERIAL` 换成第一行命令列出的设备序列号，`DEVICE_ID` 换成登记时返回的 ID。已有 App 配对的用户可以直接执行 `connect-adb --serial SERIAL --device-id DEVICE_ID`。MCP 使用 `phoneuse_connect` 的 `adb_serial` 或 `address` 参数。桥接通过指定 ADB 设备临时转发到手机的 8443 端口，核对 App 安装 ID 和 TLS 公钥。首次启用 App 连接仍需完成原有的八位码配对。
+
+| 操作 | 仅 App | 仅 ADB | App + ADB |
+|---|---|---|---|
+| 截图 | 无障碍截图 | 原始分辨率 PNG | 优先使用 App；无障碍不可用时通过 ADB 截图 |
+| 中文选区替换 | 可读、可编辑节点支持 | 不支持 | 通过 App 对当前选区执行 `input_text` 的 `insert` 模式 |
+| 发送语音 | 需要 ADB helper | 需要 App | 桥接启动 helper，App 校验语音按钮；设备音频路由探测通过后可调用 |
+
+**验收顺序**
+
+1. 只接入 ADB，记录 `device_id`。调用 `observe`，参数使用 `{"mode":"screenshot"}`，可加 `--screenshot-out screen.png`。检查 `get_capabilities.features`，此时只有 `screenshot` 为真。
+2. 接入 App，开启无障碍。在编辑框中选中一段中文，重新 `observe` 取得编辑框的 `element_id`，用 `input_text` 的 `mode:"insert"` 替换选区，再观察实际文字。设备列表仍应只有原来的 ID。
+3. 检查 `send_voice.helper_attached`、`routing_api_available` 和 `unavailable_reason`。辅助进程可能需要稍后再次查询。实际发送时使用新的 App 观察和目标聊天应用中的语音按钮。
+4. 用 `disconnect --device-id DEVICE_ID --backend adb` 禁用桥接的 ADB 连接。截图和选区替换仍由 App 提供，桥接的 `features.send_voice` 为假。重新 `connect-adb`，再用 `disconnect --device-id DEVICE_ID --backend app`，验证相同 ID 仍能截图，选区替换和语音均不可用。MCP 对应工具为 `phoneuse_disconnect`。重新 `pair` 可恢复已保存的 App 连接。
+
+仅 ADB 的首版支持截图、按坐标点击和长按、两点滑动、返回、主页和最近任务。节点树、条件等待及高级截图选项依赖 App。ADB 坐标操作会重新比较屏幕像素，页面发生变化时要求重新观察。连接切换后应获取新快照；如果动作已经发出但结果未知，使用原 `request_id` 查状态。ADB 设备标记保存在手机的 `/data/local/tmp/.phoneuse-device-id`，网络地址和调试序列号仅用于建立连接。
+
 同时更新手机和桥接。已有 HTTP 地址会在本地迁移为 HTTPS，但旧凭证会丢弃，必须重新核对配对。TLS 密钥变化不会自动接受；若独立核实确实进行了重装／重置，先在手机撤销旧客户端，再执行 `python tools/phoneuse_client.py forget-device --device-id DEVICE_ID`，然后重新配对。
 
 无法输入时检查无障碍、锁屏和客户端授权。云端 AI 如果不能访问局域网或运行本地桥接，仅安装接入文件无法连接手机。

@@ -53,7 +53,9 @@ HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，不设置 Secure，保
 
 ### AI 的持久连接与身份
 
-`python tools/phoneuse_client.py mcp-stdio --url https://PHONE:8443` 在未配对或手机离线时也可处理 initialize。一个桥接管理多台设备；`phoneuse_connect` 按地址添加或按 `device_id` 重连，`phoneuse_list_devices` 返回安装级 ID、名称、型号、Android 版本、地址、在线状态和模拟器标记。后续每次设备调用必须显式指定 `device_id`，不维护共享“当前设备”。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供手机工具。
+`python tools/phoneuse_client.py mcp-stdio` 在未配对或手机离线时也可处理 initialize。使用 `phoneuse_connect(address=...)` 接入 App，使用 `phoneuse_connect(adb_serial=...)` 接入已授权的 ADB 设备。`phoneuse_list_devices` 为每台经过验证的设备返回一个逻辑 `device_id`，后续调用都使用这个 ID。每次 App 连接仍会核验其安装 ID 和 TLS 公钥。`phoneuse_call` 是未刷新工具列表的宿主可用的调用入口。
+
+CLI 和 stdio 桥接在三种模式下提供相同的工具参数。查询 `get_capabilities.mode`（`app`、`adb`、`app+adb`）以及 `features.screenshot`、`features.selection_replace`、`features.send_voice`，再决定如何操作。中文选区替换使用 `input_text(mode="insert")`，需要目标编辑框可读且具有当前选区。ADB 截图使用原始分辨率和物理像素。快照归属于采集它的后端，切换后要重新观察。`phoneuse_disconnect(device_id=..., backend="app"|"adb")` 禁用指定的桥接连接并保留登记信息。
 
 `GET /identity` 无需凭证，返回 `device_id/name/model/android_version/is_emulator/service_instance_id`。App 安装级 UUID 与地址分离，名称可在手机本地修改；身份与配对偏好设置排除备份/设备迁移。桥接在发送认证请求前先验证公开设备 ID，地址对应其他安装时不发送旧 token。换地址重连也必须匹配已保存身份。旧配置缺少可信设备 ID 时需要重新在手机批准，不能只凭 IP 迁移凭证。每个原生连接还必须在发送 HTTP 数据前验证保存的 TLS 公钥。旧 HTTP 凭证必须重新短码配对；密钥变化时拒绝连接，不会自动替换指纹。
 
