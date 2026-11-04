@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+import wave
 from urllib.parse import urlsplit
 
 
@@ -36,6 +37,27 @@ class BridgeError(RuntimeError):
     def __init__(self, code, message, device_id=None, **details):
         super().__init__(message)
         self.value = {"device_id": device_id, "error": {"code": code, "message": message}, **details}
+
+
+def prepare_voice_file(arguments, device_id):
+    path_value = arguments.pop("audio_file", None)
+    try:
+        if not isinstance(path_value, str) or not path_value or "pcm_base64" in arguments or "sample_rate" in arguments:
+            raise ValueError("Provide audio_file only; the bridge reads the WAV format")
+        path = Path(path_value).expanduser()
+        if not path.is_file():
+            raise ValueError("audio_file must be a regular WAV file on the bridge host")
+        with wave.open(str(path), "rb") as audio:
+            rate, frames = audio.getframerate(), audio.getnframes()
+            if (audio.getnchannels() != 1 or audio.getsampwidth() != 2 or audio.getcomptype() != "NONE"
+                    or not 8000 <= rate <= 48000 or not 1 <= frames <= 30 * rate):
+                raise ValueError("Use a mono PCM16 WAV, 8000..48000 Hz, up to 30 seconds")
+            pcm = audio.readframes(frames)
+            if len(pcm) != 2 * frames:
+                raise ValueError("Incomplete WAV audio")
+    except (ValueError, OSError, wave.Error, EOFError) as error:
+        raise BridgeError("INVALID_ARGUMENT", str(error) or "Invalid WAV file", device_id, action_executed=False) from error
+    arguments.update(sample_rate=rate, pcm_base64=base64.b64encode(pcm).decode("ascii"))
 
 
 def origin(value):
@@ -346,6 +368,9 @@ class Connection:
             arguments["device_id"] = device_id
             # Honor an explicitly supplied instance to reject stale callers.
             arguments.setdefault("service_instance_id", identity["service_instance_id"])
+            tool = payload.get("tool") if endpoint == "/api" else payload["params"].get("name")
+            if tool == "send_voice" and "audio_file" in arguments:
+                prepare_voice_file(arguments, device_id)
         try:
             value = post(device, endpoint, payload)
         except HttpError as error:
@@ -529,6 +554,12 @@ class Connection:
                 schema = tool.setdefault("inputSchema", {"type": "object"})
                 schema.setdefault("properties", {}).update(DEVICE_FIELDS)
                 schema["required"] = list(dict.fromkeys(["device_id", *schema.get("required", [])]))
+                if tool["name"] == "send_voice":
+                    fields = schema["properties"]
+                    for field in ("pcm_base64", "sample_rate"):
+                        fields.pop(field, None)
+                    fields["audio_file"] = {"type": "string", "description": "WAV file on the bridge host (mono PCM16, 8–48 kHz, up to 30 s)"}
+                    schema["required"] = [k for k in schema["required"] if k not in ("pcm_base64", "sample_rate")] + ["audio_file"]
                 combined.setdefault(tool["name"], tool)
         return list(combined.values())
 

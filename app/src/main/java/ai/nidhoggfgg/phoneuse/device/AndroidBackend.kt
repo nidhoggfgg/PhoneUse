@@ -1,6 +1,7 @@
 package ai.nidhoggfgg.phoneuse.device
 
 import ai.nidhoggfgg.phoneuse.core.*
+import ai.nidhoggfgg.phoneuse.voice.VoiceProvider
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.app.KeyguardManager
@@ -54,6 +55,12 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         "unavailable_reason" to if (PhoneAccessibilityService.current == null) "ACCESSIBILITY_UNAVAILABLE" else null,
         "screenshot" to "accessibility_on_demand; protected windows may fail",
         "text_modes" to JSONArray(listOf("replace", "insert")),
+        "send_voice" to VoiceProvider.attachment.let { attachment ->
+            val attached = attachment?.helper?.asBinder()?.isBinderAlive == true
+            json("helper_attached" to attached, "routing_api_available" to (attached && attachment?.routingError == null),
+                "unavailable_reason" to if (attached) attachment?.routingError else "Start the adb voice helper",
+                "max_seconds" to 30, "format" to "mono PCM16, 8000..48000 Hz", "requires" to "ADB helper and UID-scoped recorder injection")
+        },
         "insert_mechanism" to "read selection + ACTION_SET_TEXT; requires readable non-password text",
         "coordinate_space" to "default display physical pixels, origin top-left, system bars and IME included",
         "max_nodes" to 1500, "snapshot_ttl_ms" to 30_000, "compact_tree_default" to true,
@@ -572,6 +579,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             } finally { node.recycle() }
         }
         when (name) {
+            "send_voice" -> return sendVoice(service, args, client, snapshot ?: fail("STALE_OBSERVATION", "Observe the voice button first"), check)
             "tap", "long_press", "swipe", "scroll" -> return gesture(service, name, args) { points ->
                 check()
                 validateContext(service, args, client)
@@ -592,6 +600,90 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             }
         }
         return json("confirmation" to "android_accepted", "business_success" to JSONObject.NULL)
+    }
+
+    private fun sendVoice(service: PhoneAccessibilityService, args: JSONObject, client: String, snapshot: Snapshot, check: () -> Unit): JSONObject {
+        val attachment = VoiceProvider.attachment ?: fail("VOICE_UNAVAILABLE", "Start the adb voice helper first")
+        attachment.routingError?.let { fail("VOICE_UNAVAILABLE", it) }
+        val helper = attachment.helper
+        val rate = args.getInt("sample_rate")
+        val encoded = args.string("pcm_base64", 3840000)
+        val pcm = try { java.util.Base64.getDecoder().decode(encoded) }
+            catch (_: IllegalArgumentException) { fail("INVALID_ARGUMENT", "Invalid PCM base64") }
+        if (pcm.isEmpty() || pcm.size % 2 != 0 || pcm.size > rate * 60)
+            fail("INVALID_ARGUMENT", "Provide up to 30 seconds of mono PCM16")
+        val marker = args.optString("sent_marker")
+        fun inspectWindow(lookForMarker: Boolean = false): Boolean {
+            check()
+            if (ready().instanceId != service.instanceId || geometry() != Triple(snapshot.width, snapshot.height, snapshot.rotation))
+                fail("STALE_OBSERVATION", "Service or display changed")
+            val root = service.rootInActiveWindow ?: fail("WINDOW_MISMATCH", "No active application")
+            try {
+                if (root.windowId != snapshot.window || root.packageName?.toString() != snapshot.app)
+                    fail("WINDOW_MISMATCH", "Voice target window changed")
+                val window = root.window ?: fail("WINDOW_MISMATCH", "Voice target window unavailable")
+                try { if (window.displayId != Display.DEFAULT_DISPLAY) fail("DISPLAY_UNSUPPORTED", "Voice button must be on the default display") }
+                finally { window.recycle() }
+                if (!lookForMarker || marker.isEmpty()) return false
+                val matches = root.findAccessibilityNodeInfosByText(marker)
+                try { return matches.any { it.isVisibleToUser && (it.text?.toString() == marker || it.contentDescription?.toString() == marker) } }
+                finally { matches.forEach { it.recycle() } }
+            } finally { root.recycle() }
+        }
+        inspectWindow()
+        if (snapshot.app in setOf("", context.packageName, "com.android.systemui"))
+            fail("LOCAL_CONTROL_UI", "Select a voice button in the target app")
+        val session = try { helper.prepare(snapshot.app, rate, pcm.size) }
+            catch (e: Exception) { fail("VOICE_UNAVAILABLE", e.message ?: "ADB audio route unavailable") }
+        var attempted = false
+        var markerEligible = false
+        try {
+            for (offset in pcm.indices step 32768) {
+                check()
+                session.append(pcm.copyOfRange(offset, minOf(pcm.size, offset + 32768)))
+            }
+            val point = if (args.has("element_id")) {
+                val node = target(service, args, snapshot, "send_voice", check)
+                try {
+                    val bounds = Rect().also(node::getBoundsInScreen)
+                    if (!bounds.intersect(0, 0, snapshot.width, snapshot.height)) fail("ELEMENT_UNAVAILABLE", "Voice button is off screen")
+                    bounds.exactCenterX() to bounds.exactCenterY()
+                } finally { node.recycle() }
+            } else {
+                val x = args.getDouble("x").toFloat()
+                val y = args.getDouble("y").toFloat()
+                if (x < 0 || y < 0 || x >= snapshot.width || y >= snapshot.height) fail("INVALID_ARGUMENT", "Voice button outside display")
+                x to y
+            }
+            protectLocalControls(service, listOf(point), check)
+            validateContext(service, args, client)
+            markerEligible = marker.isNotEmpty() && !inspectWindow(true)
+            inspectWindow()
+            attempted = true
+            session.press(point.first, point.second)
+            while (true) {
+                val markerVisible = inspectWindow(markerEligible)
+                if (session.released()) break
+                if (markerVisible) markerEligible = false
+                Thread.sleep(20)
+            }
+        } catch (e: Exception) {
+            if (attempted) fail("RESULT_UNKNOWN", "Voice gesture interrupted; inspect before retrying: ${e.message}")
+            if (e is DeviceError) throw e
+            fail("VOICE_UNAVAILABLE", e.message ?: "Voice helper unavailable before touch")
+        } finally { runCatching { session.close() } }
+        var confirmed = false
+        if (markerEligible) {
+            val until = SystemClock.elapsedRealtime() + 1500
+            try {
+                while (!confirmed && SystemClock.elapsedRealtime() < until) {
+                    confirmed = inspectWindow(true)
+                    if (!confirmed) Thread.sleep(60)
+                }
+            } catch (_: Exception) { /* Release already happened; evidence is unavailable. */ }
+        }
+        return json("mechanism" to "adb_voice", "confirmation" to if (confirmed) "sent_confirmed" else "released",
+            "business_success" to if (confirmed) true else JSONObject.NULL)
     }
     private fun textArguments(node: AccessibilityNodeInfo, args: JSONObject): Bundle {
         val text = args.opt("text") as? String ?: fail("INVALID_ARGUMENT", "text must be a string")

@@ -30,7 +30,7 @@ class DeviceController(
     private data class Reservation(val client: String, val id: String, val expires: Long)
     private var reservation: Reservation? = null // Guarded by requests, including queue admission.
     @Volatile private var active: Request? = null
-    val actionNames = setOf("tap", "long_press", "swipe", "scroll", "input_text", "back", "home", "recents", "launch_app")
+    val actionNames = setOf("tap", "long_press", "send_voice", "swipe", "scroll", "input_text", "back", "home", "recents", "launch_app")
 
     fun call(client: String, name: String, args: JSONObject): JSONObject {
         try {
@@ -98,7 +98,9 @@ class DeviceController(
     private fun action(client: String, name: String, args: JSONObject): JSONObject {
         val id = args.string("request_id", 128)
         val key = "$client:$id"
-        val signature = name + canonical(args)
+        // Retain a digest rather than keeping whole audio clips in the deduplication cache.
+        val signature = name + java.util.Base64.getEncoder().encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256").digest(canonical(args).toByteArray()))
         val request: Request
         synchronized(requests) {
             requests.entries.removeAll { it.value.result.isDone && clock() - it.value.created > 600_000 }
@@ -108,6 +110,8 @@ class DeviceController(
                 request = old
             } else {
                 checkReservation(client, args)
+                if (name == "send_voice" && requests.values.any { !it.result.isDone && it.signature.startsWith("send_voice") })
+                    fail("BUSY", "A voice request is already pending")
                 if (requests.size >= 256 || requests.values.sumOf(::retainedSize) + terminalResultReserve > retentionBudget)
                     fail("BUSY", "Deduplication cache full; retry later")
                 val generation = gate.generation

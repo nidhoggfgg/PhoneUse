@@ -26,7 +26,7 @@ AI 使用 `phoneuse_connect`，不直接处理凭证。首次返回桥接本地�
 
 `GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需已配对客户端认证，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
 
-API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `https://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
+API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB，已鉴权的语音请求上限为 4 MiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `https://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
 
 浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，浏览器依赖浏览器自身的证书信任；请求正文为 `{"client_name":"browser"}`，采用原有六位授权核对码，不执行原生八位 SAS 流程。浏览器证书警告不能由网页或桥接自动消除。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天，每次恢复会话时续期；浏览器自身的清理策略仍可能提前移除。Cookie 设置 Secure，仅在 HTTPS 中发送。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
 
@@ -70,17 +70,38 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 | wait_for_change | ui_version；timeout_ms：1–10000，默认 5000 |
 | tap | element_id，或 x/y |
 | long_press | element_id，或 x/y；坐标动作 duration_ms：500–5000，默认 600 |
+| send_voice | 观察到的语音按钮（element_id 或物理坐标 x/y）、客户端已有的 audio_file，可选 sent_marker |
 | swipe | points：2–64 个 {x,y}；duration_ms：1–5000，默认 600 |
 | scroll | element_id 或 region:{left,top,right,bottom}；direction |
 | input_text | observation_id、element_id、text、mode:replace/insert |
 | back / home / recents | 无额外参数 |
 | launch_app | package_name |
 
+### 发送语音消息
+
+发送语音是可选功能，在 Phone Use 支持的 Android 版本上均按设备实际能力检查。Phone Use 需安装在主用户下。实验性的辅助进程以 ADB shell 身份运行，检查音频路由权限以及系统能否为指定 App 的 UID 建立录音注入规则。安装 APK、启动 Phone Use 后，在单独的 PowerShell 或 bash 终端运行以下命令，测试期间保持终端开启。
+
+```sh
+adb shell 'CLASSPATH=$(pm path ai.nidhoggfgg.phoneuse | head -n 1 | cut -c9-) app_process / ai.nidhoggfgg.phoneuse.voice.VoiceShell'
+```
+
+看到 `Phone Use voice helper attached` 后，用 `get_capabilities` 检查 `send_voice.routing_api_available`。值为 false 时可查看 `unavailable_reason`；值为 true 表示通过初步检查，每次发送仍会验证所选 App 的录音通道。观察聊天 App 的“按住说话”按钮，再通过 CLI 或 stdio MCP 调用 `send_voice`。将下面的 ID 替换为本次观察值和新的请求 ID。
+
+```json
+{"request_id":"NEW_UUID","observation_id":"OBSERVATION_ID","element_id":"ELEMENT_ID","audio_file":"C:/audio/message.wav"}
+```
+
+客户端读取单声道 PCM16 WAV 文件，支持 8000–48000 Hz、最长 30 秒。直接调用手机端 HTTPS API/MCP 时，传 `sample_rate` 和 `pcm_base64`（小端有符号 PCM16 采样，不含 WAV 文件头）。已配对客户端的语音请求支持最多 4 MiB JSON。
+
+Phone Use 在按下前为目标 App 的 UID 准备录音通道。按下后最多等 2.5 秒，确认目标 App 新开了录音、正在使用本次注入通道且未被静音，才送入音频。播放位置到达最后一帧后松手。录音中断、目标窗口改变或控制被撤销时，辅助进程会尝试取消触摸。只要可能触碰过按钮，就应先观察会话再决定下一步。
+
+`execution.confirmation` 为 `released` 表示已松手。可重新观察会话确认消息，也可传 `sent_marker` 指定该 App 能唯一标识本条消息发送成功的可见文字或无障碍描述。只有该标记在松手后 1.5 秒内新出现在同一窗口，才返回 `sent_confirmed`。没有可靠标记时省略它。请求仍在执行时，用原 `request_id` 查询 `get_status`。Phone Use 进程退出后需重启辅助进程。
+
 ### 动作公共字段
 
 所有 `tap` 至 `launch_app` 输入动作必填 `request_id`。`request_id` 最多 128 字符。可选：
 
-- `observation_id`：关联设备、显示几何和目标引用；节点及坐标动作（tap/long_press/swipe/scroll/input_text）必填，导航/启动应用可选。
+- `observation_id`：关联设备、显示几何和目标引用；节点及坐标动作（tap/long_press/send_voice/swipe/scroll/input_text）必填，导航/启动应用可选。
 - `expected_window_id`：预期的活动窗口。
 - `observe_after`：动作后附带新观察，默认 false。
 - `observation_options`：复用 `observe` 的观察参数；仅在 `observe_after:true` 或 `observe_on_rejection:true` 时允许。不是动作目标参数，不能包含 request_id、device_id 等字段。

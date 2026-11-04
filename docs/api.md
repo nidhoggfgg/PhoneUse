@@ -24,7 +24,7 @@ Requests expire two minutes after creation; approval does not extend that time. 
 
 `GET /` serves a public console without credentials or device data. Navigation from another page, including `Sec-Fetch-Site: cross-site`, is allowed, subject to Host validation. Scripts, pairing, and API requests retain same-origin checks. Framing is forbidden. `GET /app.js` is public; authenticated `GET /api/tools` returns `{"tools":[...]}` using the same parameter definitions as MCP `tools/list`.
 
-API/MCP accept Bearer authorization or the browser's pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit. There is no cross-origin CORS access. Host must be the phone IPv4 and port used to connect, such as `192.168.1.20:8443`; Origin, when present, must match `https://IP:PORT`. Domain names and reverse proxies are not currently supported. Native clients without Origin are allowed.
+API/MCP accept Bearer authorization or the browser's pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit except for authenticated voice requests (4 MiB). There is no cross-origin CORS access. Host must be the phone IPv4 and port used to connect, such as `192.168.1.20:8443`; Origin, when present, must match `https://IP:PORT`. Domain names and reverse proxies are not currently supported. Native clients without Origin are allowed.
 
 Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with `{"client_name":"browser"}` and the original six-digit authorization code. This requires independently trusted browser TLS; it is not the native eight-digit SAS protocol. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days and is renewed on session recovery, subject to browser cleanup policies. The Secure flag restricts cookies to HTTPS. JavaScript does not read the long-term credential.
 
@@ -66,17 +66,38 @@ The response is the tool result. Device errors use HTTP 200 with `state/error`; 
 | `wait_for_change` | `ui_version`; `timeout_ms`: 1–10000, default 5000 |
 | `tap` | `element_id`, or `x/y` |
 | `long_press` | `element_id`, or `x/y`; coordinate `duration_ms`: 500–5000, default 600 |
+| `send_voice` | Observed button (`element_id` or physical `x/y`), existing `audio_file` on the bridge host, optional `sent_marker` |
 | `swipe` | `points`: 2–64 `{x,y}` entries; `duration_ms`: 1–5000, default 600 |
 | `scroll` | `element_id` or `region:{left,top,right,bottom}`; `direction` |
 | `input_text` | `observation_id`, `element_id`, `text`, `mode:replace/insert` |
 | `back` / `home` / `recents` | No additional arguments |
 | `launch_app` | `package_name` |
 
+### Sending a voice message
+
+Voice sending is optional on all Android versions supported by Phone Use. The experimental helper runs as ADB shell with Phone Use installed in the primary user profile. It checks for audio routing permission and a system API that can direct recording input to a specific app UID. Install the APK, start Phone Use and keep the following command running in a separate terminal (PowerShell or bash):
+
+```sh
+adb shell 'CLASSPATH=$(pm path ai.nidhoggfgg.phoneuse | head -n 1 | cut -c9-) app_process / ai.nidhoggfgg.phoneuse.voice.VoiceShell'
+```
+
+Wait for `Phone Use voice helper attached` and check `get_capabilities.send_voice.routing_api_available`. If false, see `unavailable_reason`. If true, the helper passed its initial checks; each send still verifies that the route works for the selected app. Observe the target app's hold-to-talk button. For CLI or stdio MCP, use these arguments with the observed IDs and a fresh request ID:
+
+```json
+{"request_id":"NEW_UUID","observation_id":"OBSERVATION_ID","element_id":"ELEMENT_ID","audio_file":"/absolute/path/message.wav"}
+```
+
+The bridge reads a mono PCM16 WAV at 8000–48000 Hz, up to 30 seconds. Direct HTTPS API/MCP clients send `pcm_base64` (signed little-endian PCM16 samples, without a WAV header) and `sample_rate` in place of the host path. Authenticated voice requests allow up to 4 MiB of JSON.
+
+Phone Use prepares a UID-scoped recording route before pressing. It waits up to 2.5 seconds for a new, unsilenced recorder using that route, then releases after the playback head consumes the last frame. If the recorder disappears, the app window changes, or control is revoked while held, the helper attempts to cancel the gesture. If any touch may have occurred, inspect the conversation before deciding what to do next.
+
+`execution.confirmation: released` confirms touch release. To verify sending, observe the conversation or provide an optional `sent_marker` that uniquely identifies this message's successful send. An exact visible text or description appearing in the same window within 1.5 seconds after release can return `sent_confirmed`. Omit the marker if the app exposes no reliable one. For pending requests, poll `get_status` using the original request ID. Restart the helper if Phone Use's process exits.
+
 ### Common action fields
 
 Every input action from `tap` through `launch_app` requires `request_id` (up to 128 characters).
 
-- `observation_id`: required for node/coordinate actions (`tap/long_press/swipe/scroll/input_text`), optional for navigation and launch; associates device, display geometry, and target references.
+- `observation_id`: required for node/coordinate actions (`tap/long_press/send_voice/swipe/scroll/input_text`), optional for navigation and launch; associates device, display geometry, and target references.
 - `expected_window_id`: optional expected active window.
 - `observe_after`: default false; explicitly attaches a fresh observation.
 - `observation_options`: the same parameters as `observe`, allowed only with `observe_after:true` or `observe_on_rejection:true`. It cannot contain action/routing fields such as `request_id` or `device_id`.

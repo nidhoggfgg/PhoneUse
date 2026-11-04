@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import wave
 from unittest.mock import patch, MagicMock
 
 import phoneuse_client as client
@@ -50,6 +51,31 @@ class ClientTest(unittest.TestCase):
 
     def read(self):
         return json.loads(self.path.read_text(encoding="utf-8"))
+
+    def test_voice_file_is_read_on_bridge_for_api_and_mcp(self):
+        path = self.path.parent / "语音.wav"
+        samples = b"\x00\x01" * 8000
+        with wave.open(str(path), "wb") as wav:
+            wav.setparams((1, 2, 8000, 0, "NONE", ""))
+            wav.writeframes(samples)
+        self.save_devices()
+        for endpoint in ("/api", "/mcp"):
+            args = {"audio_file": str(path), "request_id": "a", "element_id": "0", "observation_id": "snapshot"}
+            payload = ({"tool": "send_voice", "arguments": args} if endpoint == "/api" else
+                       {"id": "a", "method": "tools/call", "params": {"name": "send_voice", "arguments": args}})
+            response = identity() if endpoint == "/api" else {"id": "a", "jsonrpc": "2.0", "result": client.tool_result(identity())}
+            with patch.object(client, "identify", self.identify_address), patch.object(client, "post", return_value=response) as post:
+                self.connection.send("phone-a", endpoint, payload)
+                sent = post.call_args.args[2]
+                wire = (sent if endpoint == "/api" else sent["params"])["arguments"]
+                self.assertNotIn("audio_file", wire)
+                self.assertEqual(8000, wire["sample_rate"])
+                self.assertEqual(samples, base64.b64decode(wire["pcm_base64"]))
+                self.assertIn("audio_file", args)
+        path.write_bytes(path.read_bytes()[:-2])
+        with self.assertRaises(client.BridgeError) as failure:
+            client.prepare_voice_file({"audio_file": str(path)}, "phone-a")
+        self.assertFalse(failure.exception.value["action_executed"])
 
     def run_bridge(self, requests):
         incoming = io.StringIO("\n".join(json.dumps({"jsonrpc": "2.0", **item}) for item in requests))

@@ -23,6 +23,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     private val serviceInstanceId: String = UUID.randomUUID().toString(),
     private val connected: (String) -> Unit) {
     private val workers = ThreadPoolExecutor(8, 8, 0, TimeUnit.SECONDS, ArrayBlockingQueue(16))
+    private val largeUpload = java.util.concurrent.Semaphore(1)
     private val clients = ConcurrentHashMap.newKeySet<Socket>()
     private val deadlines = java.util.concurrent.ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
     @Volatile private var listener: ServerSocket? = null
@@ -64,6 +65,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         "phoneuse_client_$port=$token; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
     private class HttpError(val status: Int, message: String) : RuntimeException(message)
     private fun handle(socket: Socket) {
+        var largeBody = false
         try {
             (socket as SSLSocket).startHandshake()
             val input = BufferedInputStream(socket.inputStream)
@@ -143,8 +145,14 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 if (version != null && version !in versions) throw HttpError(400, "Unsupported MCP protocol version")
             }
             val body = ByteArrayOutputStream()
+            val normalLimit = 65_536
+            val bodyLimit = if (client != null && path in setOf("/api", "/mcp")) 4 * 1024 * 1024 else normalLimit
             fun readBytes(size: Int) {
-                if (size < 0 || size > 65_536 - body.size()) throw HttpError(413, "Body exceeds 64 KiB")
+                if (size < 0 || size > bodyLimit - body.size()) throw HttpError(413, "Body exceeds allowed size")
+                if (!largeBody && body.size() + size > normalLimit) {
+                    if (!largeUpload.tryAcquire()) throw HttpError(429, "Another audio request is being handled")
+                    largeBody = true
+                }
                 var remaining = size
                 val buffer = ByteArray(4096)
                 while (remaining > 0) {
@@ -174,6 +182,11 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 } else when (char) { '"' -> quoted = true; '{', '[' -> { if (++depth > 64) throw HttpError(400, "JSON nesting too deep") }; '}', ']' -> depth-- }
             }
             val payload = try { JSONObject(raw) } catch (_: Exception) { throw HttpError(400, "Invalid JSON object") }
+            if (body.size() > normalLimit) {
+                val voice = if (path == "/api") payload.optString("tool") == "send_voice"
+                    else payload.optString("method") == "tools/call" && payload.optJSONObject("params")?.optString("name") == "send_voice"
+                if (!voice) throw HttpError(413, "Only send_voice accepts bodies over 64 KiB")
+            }
             val response = if (isPairing) {
                 try {
                     if (pairingPath == "/pair/request") {
@@ -221,7 +234,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         catch (e: Exception) {
             android.util.Log.w("PhoneUseHttp", "HTTP request failed: ${e.javaClass.simpleName}", e)
             runCatching { write(socket, Response(500, json("error" to "Request failed"))) }
-        }
+        } finally { if (largeBody) largeUpload.release() }
     }
     private fun mcp(client: String, request: JSONObject): Response {
         val id = request.opt("id")

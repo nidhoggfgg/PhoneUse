@@ -26,6 +26,8 @@
         android:roundIcon="@mipmap/ic_phone_use"
         android:supportsRtl="true"
         android:theme="@style/Theme.PhoneUse">
+        <provider android:name=".voice.VoiceProvider" android:authorities="ai.nidhoggfgg.phoneuse.voice"
+            android:permission="android.permission.DUMP" android:exported="true" />
         <service android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false" android:exported="false">
             <meta-data android:name="autoStoreLocales" android:value="true" />

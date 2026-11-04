@@ -9,7 +9,7 @@ object ToolCatalog {
         val tool = (0 until tools.length()).map { tools.getJSONObject(it) }.find { it.getString("name") == name }
             ?: fail("UNKNOWN_TOOL", "Unknown tool: $name")
         validateObject(args, tool.getJSONObject("inputSchema"), "arguments")
-        if (name in setOf("tap", "long_press")) {
+        if (name in setOf("tap", "long_press", "send_voice")) {
             val node = args.has("element_id")
             if (node && (args.has("x") || args.has("y"))) fail("INVALID_ARGUMENT", "Choose element_id OR coordinates")
             if (!node && (!args.has("x") || !args.has("y"))) fail("INVALID_ARGUMENT", "Supply element_id OR x and y")
@@ -137,6 +137,12 @@ object ToolCatalog {
         tool("wait_for_change", "Wait for an accessibility UI version change; no semantic condition evaluation", mapOf("ui_version" to integer("Version from observe"), "timeout_ms" to integer("1..10000, default 5000")), listOf("ui_version")),
         tool("tap", "Tap a snapshot element OR full-display coordinates, including keyboard and system UI", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y")), listOf("observation_id"), true),
         tool("long_press", "Long press an element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y"), "duration_ms" to integer("500..5000 for coordinate gesture")), listOf("observation_id"), true),
+        tool("send_voice", "Hold a voice button and inject prepared audio only after the target records from the attached ADB helper",
+            mapOf("element_id" to string("Observed button"), "x" to number("Display x"), "y" to number("Display y"),
+                "pcm_base64" to string("Mono signed little-endian PCM16, at most 30 seconds").put("maxLength", 3840000),
+                "sample_rate" to bounded("Sample rate in Hz", 8000, 48000),
+                "sent_marker" to nonempty("Optional exact visible text or description unique to successful sending of this message, absent before release")),
+            listOf("observation_id", "pcm_base64", "sample_rate"), true),
         tool("swipe", "Swipe along 2..64 physical display points", mapOf("points" to json("type" to "array", "items" to point, "minItems" to 2, "maxItems" to 64), "duration_ms" to integer("1..5000, default 600")), listOf("observation_id", "points"), true),
         tool("scroll", "Scroll a node forward/backward or a rectangular screen region up/down/left/right", mapOf("element_id" to string("Snapshot container"), "direction" to string("forward, backward, up, down, left, right"),
             "region" to json("type" to "object", "properties" to json("left" to integer("Left pixel"), "top" to integer("Top pixel"), "right" to integer("Right pixel"), "bottom" to integer("Bottom pixel")), "required" to JSONArray(listOf("left", "top", "right", "bottom")), "additionalProperties" to false)), listOf("observation_id", "direction"), true),
